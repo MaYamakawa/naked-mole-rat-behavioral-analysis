@@ -1,0 +1,731 @@
+---
+title: "Figure 4"
+output: html_notebook
+---
+
+#1 Permutation 10000 times for each dyad
+
+## 30-day rest/active vector for each id function
+```{r}
+vector_const_sleact <- function(k){
+  
+  colony <- colonyname[k]
+  id <- idlist[[k]]
+  size <- length(id)
+  dataset <- dayname[[k]]
+  
+  #prepare initial variable for each id
+  for(i in 1:size){
+    assign(paste0("d_",i), "0", envir = .GlobalEnv)
+  }
+  
+  #30-day vector for each id
+  for(name in dataset){
+    d <- fread(paste0("data/processed_data/locsleep_data/", colony, "/", name, ".csv")) %>% 
+      mutate(Time10s = ceiling((Time-0.01)/10)) %>% 
+      distinct(Time10s, .keep_all = TRUE) %>% 
+      select(-Time, -Time10s)
+    for(i in 1:size){
+      di <- d %>% pull(i) %>% replace_na("0")
+      nth <- paste0("d_",i)
+      assign(nth, c(get(nth), di), envir = .GlobalEnv)
+    }
+  }
+  for(i in 1:size){
+    nth <- paste0("d_",i)
+    assign(nth, get(nth)[-1], envir = .GlobalEnv)
+    di <- get(paste0("d_",i)) %>% tibble() %>% 
+      mutate(Sleep = if_else(. == "S", 1, 0)) %>% pull(Sleep)
+    assign(nth, di, envir = .GlobalEnv)
+  }
+}
+```
+
+##Permutation for rest or active function
+```{r}
+##synchronized times calculation function (rest + active)
+syn_time <- function(k, ran, ID1, ID2){
+  if(ran[k] == 1){ID1r <- ID1}
+  if(ran[k] != 1){ID1r <- ID1[c(ran[k]:N,1:(ran[k]-1))]}
+  ID12 <- ID1r + ID2
+  Dt <<- sum(ID12 == 2 | ID12 == 0)
+}
+
+#permutation (circular) test for rest/active function
+syn_time_pt.test <- function(ran, ID1, ID2, nperm){
+  DT <- 0
+  for(k in 1:(nperm+1)){
+    syn_time(k, ran, ID1, ID2)
+    DT <- c(DT, Dt)
+  }
+  DT <<- DT[-1]
+}
+
+#permutation test for rest/active performing function
+syn_time_pttest <- function(colony, nperm){
+  
+  size <- idlist[colony] %>% unlist() %>% length()
+  pb <- txtProgressBar(min = 1, max = size*(size-1)/2, style = 3)
+  DTs <- list(0)
+  N <- length(d_1)
+  
+  #determine sequence to permute vector randomly
+  set.seed(10)
+  ran <- sample(2:N, nperm, replace = FALSE)
+  ran <- c(1, ran) #add actual value to the first element
+  
+  for(i in 1:(size-1)){
+    #30-day vector for ID1
+    ID1 <- get(paste0("d_",i))
+    
+    for(j in (i+1):size){
+      #progress bar
+      n <- size*(size-1)/2 - (size-i+1)*(size-i)/2 + (j-i)
+      setTxtProgressBar(pb, n)
+      #30-day vector for ID2
+      ID2 <- get(paste0("d_",j))
+      #permutation test
+      syn_sleact_pt.test(ran, ID1, ID2, nperm)
+      DTs[n] <- list(DT)
+    }
+  }
+  DT_s <<- DTs
+}
+```
+
+##Run function
+```{r}
+nperm <- 9999
+
+for(l in 1:5){
+  vector_const_sleact(l)
+  system.time(syn_time_pttest(l, nperm))
+  
+  size <- idlist[l] %>% unlist() %>% length()
+  DT_s <- data.frame(DT_s)
+  colnames(DT_s) <- 1:(size*(size-1)/2)
+  nth <- paste0("DT_", l)
+  assign(nth, DT_s)
+}
+#output data: DT_1~5
+
+
+#trial for the first dyad
+#colony <- 1
+#size <- idlist[colony] %>% unlist() %>% length()
+#DTs <- list(0)
+#N <- length(d_1)
+#set.seed(10)
+#ran <- sample(2:N, nperm, replace = FALSE)
+#ran <- c(1, ran)
+#ID1 <- get(paste0("d_",1))
+#ID2 <- get(paste0("d_",2))
+#syn_time_pt.test(ran, ID1, ID2, nperm)
+#n <- size*(size-1)/2 - (size-1+1)*(size-1)/2 + (2-1)
+#DTs[n] <- list(DT)
+#DT_s <- DTs[[1]] %>% as.vector()
+#DT_s <- tibble(DT_s)
+```
+
+##Integrate data
+```{r}
+trans_tidy_time <- function(d, i){
+  colony <- colonyname[i]
+  d %>% 
+    mutate(index = 1:10000) %>% 
+    pivot_longer(cols = -index, names_to = "Comb", values_to = "T_val") %>% 
+    mutate(Comb = as.integer(Comb)) %>% 
+    arrange(Comb) %>% 
+    mutate(Colony = colony) %>% 
+    select(Colony, Comb, index, T_val)
+}
+
+DT_1_l <- trans_tidy_time(DT_1, 1)
+DT_2_l <- trans_tidy_time(DT_2, 2)
+DT_3_l <- trans_tidy_time(DT_3, 3)
+DT_4_l <- trans_tidy_time(DT_4, 4)
+DT_5_l <- trans_tidy_time(DT_5, 5)
+
+DT_t_l <- bind_rows(DT_1_l, DT_2_l, DT_3_l, DT_4_l, DT_5_l)
+```
+
+##Dyad information
+```{r}
+ID_att <- read.csv("data/pre_info_data/individual_information.csv") %>% mutate(Birth = as.Date(Birth))
+
+ID_att_1 <- ID_att %>% select(Colony, ID1 = ID, Caste1 = Caste, Sex1 = Sex, AgeD1 = AgeD, Weight1 = Weight)
+ID_att_2 <- ID_att %>% select(Colony, ID2 = ID, Caste2 = Caste, Sex2 = Sex, AgeD2 = AgeD, Weight2 = Weight)
+
+idattcomb_each <- function(colony, size){
+  rep(ID_att %>% filter(Colony == colony) %>% pull(ID), each = size)
+}
+idattcomb <- function(colony, size){
+  rep(ID_att %>% filter(Colony == colony) %>% pull(ID), size)
+}
+
+ID1 <- "0"; ID2 <- "0"; Colony <- "0"; ID1n <- 0; ID2n <- 0 
+for(i in 1:5){
+  colony <- colonyname[i]
+  size <- idlist[i] %>% unlist() %>% length()
+  
+  ID1_i <- idattcomb_each(colony, size); ID2_i <- idattcomb(colony, size)
+  Colony_i <- rep(colony, size^2)
+  ID1n_i <- rep(1:size, each = size); ID2n_i <- rep(1:size, size)
+  
+  ID1 <- c(ID1, ID1_i); ID2 <- c(ID2, ID2_i)
+  Colony <- c(Colony, Colony_i)
+  ID1n <- c(ID1n, ID1n_i); ID2n <- c(ID2n, ID2n_i)
+}
+Comb <- c(1:231, 1:136, 1:171, 1:231, 1:231)
+
+ID_att_comb <- tibble(Colony, ID1, ID2, ID1n, ID2n) %>% 
+  slice(-1) %>% filter(ID1 != ID2) %>% 
+  mutate(sum = ID1n + ID2n, dif = abs(ID1n - ID2n)) %>% 
+  group_by(Colony) %>% distinct(sum, dif, .keep_all = T) %>% 
+  ungroup() %>% mutate(Comb = Comb) %>% 
+  select(Colony, Comb, ID1, ID2)
+```
+
+
+#2 Visualization of p-value & synchrony index
+
+##p-value data
+```{r}
+#p-value summarize function
+pv_data <- function(d){
+  d %>% group_by(Comb) %>% 
+    summarise(Value = Syn[index == 1],
+              Med = median(Syn),
+              Pn = sum(Syn >= Syn[index == 1]) / 10000) %>% 
+    mutate(Sign = if_else(Pn < 0.5, "Plus", "Minus")) %>% 
+    mutate(P = if_else(Sign == "Plus", Pn * 2, (1 - Pn)*2 + 0.0002)) %>% 
+    mutate(logP = -log10(P),
+           P_score = if_else(Sign == "Plus", logP, -logP))
+}
+
+#run
+Colony <- "0"; Comb <- 0; Value <- 0; Med <- 0; Pn <- 0
+Sign <- "0"; P <- 0; logP <- 0; P_score <- 0
+pv0 <- tibble(Colony, Comb, Value, Med, Pn, Sign, P, logP, P_score)
+for(i in 1:5){
+  colony <- colonyname[i]
+  d <- DT_t_l %>% filter(Colony == colony) %>% mutate(Syn = T_val)
+  pv <- pv_data(d)
+  n <- ncol(pv)
+  pv <- pv %>% mutate(Colony = colony) %>% select(n+1, 1:n)
+  pv0 <- pv0 %>% bind_rows(pv)
+}
+pv_syntime <- pv0 %>% slice(-1)
+```
+
+##Synchrony index data
+```{r}
+#example of frequency distribution in simulated value (Figure 4B)
+DT_t_l_comb22 <- DT_t_l %>% filter(Colony == "LOC", Comb == 22) 
+
+DT_t_l_comb22 %>% filter(index != 1) %>% 
+  group_by(Comb) %>% summarise(mean = mean(T_val), sd = sd(T_val))
+##mean 132048.1	sd 3805.511
+DT_t_l_comb22 %>% filter(index == 1) %>% pull(T_val)
+##140861
+ggplot(data = DT_t_l_comb22 %>% filter(index != 1)) + 
+  geom_histogram(aes(x = T_val)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1, axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure4/Figure4B.pdf", width = 3, height = 3, units = "in")
+
+#synchrony index data (z_value = synchrony index)
+DT_t_l_sim_s <- DT_t_l %>% 
+  group_by(Colony, Comb) %>% 
+  filter(index != 1) %>% 
+  summarise(Mean = mean(T_val), SD = sd(T_val))
+zv_syntime <- pv_syntime %>% 
+  left_join(DT_t_l_sim_s, join_by(Colony, Comb)) %>% 
+  mutate(z_value = (Value - Mean) / SD) %>% 
+  left_join(ID_att_comb, join_by(Colony, Comb))
+```
+
+##Heatmap for synchrony index (Figure 4C)
+```{r}
+#matrix function
+zv_mat_data <- function(d, i){
+  id_i <- idlist[i] %>% unlist()
+  size <- length(id_i)
+  ID1 <- rep(id_i, each = size)
+  ID2 <- rep(id_i, size)
+  z_value <- rep(NA, length(ID1))
+  Dp0 <- tibble(ID1, ID2, z_value)
+  ID1n <- rep(1:size, each = size)
+  ID2n <- rep(1:size, size)
+  Dp <- tibble(ID1, ID2, z_value, ID1n, ID2n) %>% 
+    mutate(sum = ID1n + ID2n, dif = abs(ID1n - ID2n)) %>% 
+    distinct(sum, dif, .keep_all = TRUE) %>% 
+    filter(ID1 != ID2) %>% 
+    select(ID1, ID2, z_value) %>% 
+    mutate(z_value = d$z_value)
+  Dpt <- Dp %>% select(ID1 = ID2, ID2 = ID1, z_value)
+  Dp %>% bind_rows(Dpt) %>% bind_rows(Dp0) %>% 
+    distinct(ID1, ID2, .keep_all = TRUE) %>% 
+    mutate(ID1 = as.factor(ID1), ID2 = as.factor(ID2)) %>% 
+    arrange(ID1, ID2) %>% 
+    pivot_wider(names_from = ID2, values_from = z_value) %>% 
+    column_to_rownames(var = "ID1")
+}
+
+#pheatmap function
+zv_hm <- function(d, i, name, clu){
+  colony <- colonyname[i]
+  ID <- idlist[i] %>% unlist()
+  Caste <- castelist[i] %>% unlist()
+  anno <- tibble(ID, Caste) %>% column_to_rownames(var = "ID")
+  Caste_col <- c("#AF528D","#54B345","grey")
+  names(Caste_col) <- c("BF","BM","NB")
+  anno_color <- list(Caste = Caste_col)
+  RdYlBu <- c("#313695", "#4575b4", "#74add1", "#abd9e9", "#e0f3f8", "#ffffbf", 
+              "#fee090", "#fdae61", "#f46d43", "#d73027","#a50026")
+  
+  val <- d %>% rowSums(1:length(ID)) %>% as_tibble() %>% pull(value)
+  callback = function(hc, mat){
+    dend = reorder(as.dendrogram(hc), wts = val)
+    as.hclust(dend)
+  }
+  threshold <- 9.5
+  
+  pheatmap(
+    mat = d,
+    na_col = "white",
+    annotation_row = anno, 
+    annotation_col = anno,
+    annotation_colors = anno_color,
+    cellheight = 10, cellwidth = 10,
+    border_color = "NA",
+    breaks = c(seq(zv_min, threshold, length.out = 99), threshold + 1),
+    color = colorRampPalette(RdYlBu)(n=100),
+    annotation_legend = FALSE,
+    annotation_names_row = name, annotation_names_col = name,
+    show_rownames = name, show_colnames = name,
+    legend = name,
+    cluster_rows = clu, cluster_cols = clu,
+    clustering_method = "ward.D2",
+    clustering_callback = callback,
+    filename = paste0("data/Figure/Figure4/Figure4C/", colony, "_name", name, "_clu", clu, ".pdf")
+    )
+}
+
+#run
+for(i in 1:5){
+  colony <- colonyname[i]
+  d <- zv_syntime %>% filter(Colony == colony)
+  order <- idlist_syntime[i] %>% unlist()
+  zv_mat <- zv_mat_data(d, i, order)
+  zv_hm(zv_mat, i, varname, name=F, clu=T)
+  zv_hm(zv_mat, i, varname, name=T, clu=T)
+}
+```
+
+
+##Heatmap for p-value (Figure 4D)
+```{r}
+#id sequence from figure 4C
+id_1_sync <- c("2B36", "M14", "M4", "2B33", "2B34", "2B35", "2B42", "2B32", "2B50", "2B39", "2B48", 
+                "2B51", "2B37", "2B38", "2B43", "2B45", "2B47", "2B40", "2B49", "2B44", "2B41", "2B46")
+id_2_sync <- c("2D19", "2D11", "H11", "2D13", "2D33", "2D30", "2D16", "2D24", "2D32", 
+                    "2D23", "2D28", "2D35", "2D34", "2D26", "2D29", "2D12", "2D31")
+id_3_sync <- c("HG10", "HG22", "HG18", "HG23", "HG19", "HG21", "HG14", "HG11", "HG12",
+                    "HG8", "H13", "G16", "HG13", "HG7", "HG5", "HG4", "HG24", "HG16", "HG15")
+id_4_sync <- c("HT21", "HT20", "HT15", "HT19", "HT18", "L63", "HT2", "HT9", "HT14", "HT1", "HT3",
+                    "HT5", "HT4", "R21", "HT10", "HT7", "HT13", "HT16", "HT12", "HT6", "HT17", "HT11")
+id_5_sync <- c("OC1", "L55", "LOC10", "LOC4", "LOC18", "LOC11", "LOC16", "LOC9",
+                    "LOC13", "LOC2", "LOC15", "LOC6", "LOC17", "LOC23", "LOC20", 
+                    "LOC7", "LOC5", "LOC1", "LOC22", "LOC8", "LOC14", "LOC19")
+idlist_sync <- list(id_1_sync, id_2_sync, id_3_sync, id_4_sync, id_5_sync)
+
+#matrix function
+pv_mat_data <- function(d, i, order){
+  id_i <- idlist[i] %>% unlist()
+  size <- length(id_i)
+  ID1 <- rep(id_i, each = size)
+  ID2 <- rep(id_i, size)
+  P_score <- rep(NA, length(ID1))
+  Dp0 <- tibble(ID1, ID2, P_score)
+  ID1n <- rep(1:size, each = size)
+  ID2n <- rep(1:size, size)
+  Dp <- tibble(ID1, ID2, P_score, ID1n, ID2n) %>% 
+    mutate(sum = ID1n + ID2n, dif = abs(ID1n - ID2n)) %>% 
+    distinct(sum, dif, .keep_all = TRUE) %>% 
+    filter(ID1 != ID2) %>% 
+    select(ID1, ID2, P_score) %>% 
+    mutate(P_score = d$P_score)
+  Dpt <- Dp %>% select(ID1 = ID2, ID2 = ID1, P_score)
+  Dp %>% bind_rows(Dpt) %>% bind_rows(Dp0) %>% 
+    distinct(ID1, ID2, .keep_all = TRUE) %>% 
+    mutate(ID1 = factor(ID1, levels = order),
+           ID2 = factor(ID2, levels = order)) %>% 
+    arrange(ID1, ID2) %>% 
+    pivot_wider(names_from = ID2, values_from = P_score) %>% 
+    column_to_rownames(var = "ID1")
+}
+
+#pheatmap function
+pv_hm <- function(d, i, name, clu){
+  colony <- colonyname[i]
+  ID <- idlist[i] %>% unlist()
+  Caste <- castelist[i] %>% unlist()
+  anno <- tibble(ID, Caste) %>% column_to_rownames(var = "ID")
+  Caste_col <- c("#AF528D","#54B345","grey")
+  names(Caste_col) <- c("BF","BM","NB")
+  anno_color <- list(Caste = Caste_col)
+  RdYlBu <- c("#313695", "#4575b4", "#74add1", "#abd9e9", "#e0f3f8", "#ffffbf", 
+              "#fee090", "#fdae61", "#f46d43", "#d73027","#a50026")
+  pheatmap(
+    mat = d,
+    na_col = "white",
+    annotation_row = anno, 
+    annotation_col = anno,
+    annotation_colors = anno_color,
+    cellheight = 10, cellwidth = 10,
+    border_color = "NA",
+    breaks = seq(log10(0.0002), -log10(0.0002), length.out=100),
+    color = colorRampPalette(RdYlBu)(n=100),
+    annotation_legend = FALSE,
+    annotation_names_row = name, annotation_names_col = name,
+    show_rownames = name, show_colnames = name,
+    legend = name,
+    cluster_rows = clu, cluster_cols = clu,
+    filename = paste0("data/Figure/Figure4/", colony, "_name", name, "_clu", clu, ".pdf")
+    )
+}
+
+#run
+for(i in 1:5){
+  colony <- colonyname[i]
+  d <- zv_syntime %>% filter(Colony == colony)
+  order <- idlist_sync[i] %>% unlist()
+  pv_mat <- pv_mat_data(d, i, order)
+  pv_hm(pv_mat, i, varname, name=F, clu=F)
+}
+```
+
+##Network (Figure 4E)
+```{r}
+#network function
+net_vis_z <- function(d, i, var){
+  colony <- colonyname[i]
+  ID <- idlist[i] %>% unlist()
+  size <- length(ID)
+  caste <- castelist[i] %>% unlist()
+  
+  d_syn <- d %>% filter(Colony == colony) %>% 
+    filter(Sign == "Plus", P < 0.05) %>% select(ID1, ID2, !!sym(var))
+  
+  id_data <- tibble(ID, caste) %>% 
+    mutate(caste_ind = case_when(caste == "BF" ~ 1, caste == "BM" ~ 2, caste == "NB" ~ 3))
+  
+  set.seed(15)
+  pdf(paste0("data/Figure/Figure4/Figure4E/", colony, ".pdf"), width = 3, height = 3)
+  net_ss <- graph.data.frame(d = d_syn, vertices = id_data, directed = FALSE)
+  E(net_ss)$width <- d_syn %>% pull(!!sym(var)) * 0.1
+  col <- c("#AF528D","#54B345","grey")
+  V(net_ss)$color <- col[V(net_ss)$caste_ind]
+  w <- d_syn %>% pull(!!sym(var))
+  c = (1 - ((w-min(w)) / (max(w)-min(w)))) * 0.8
+  plot(net_ss, 
+       edge.color = rgb(c,c,c), 
+       vertex.label = NA, 
+       vertex.frame.color = NA,
+       vertex.label.color = "black", 
+       vertex.label.cex = 0.1, 
+       vertex.size = 10)
+  dev.off()
+}
+
+#run
+for(i in 1:5){
+  var <- "z_value"
+  net_vis_z(zv_syntime, i, var)
+}
+```
+
+
+##Network & behavioral cluster (Figure S4D)
+```{r}
+#network function
+net_vis_z_behtype <- function(d, i, var){
+  colony <- colonyname[i]
+  ID <- idlist[i] %>% unlist()
+  size <- length(ID)
+  cluster <- d_behtype_mean_d %>% filter(Colony == colony) %>% pull(Cluster)
+  
+  d_syn <- d %>% filter(Colony == colony) %>% 
+    filter(Sign == "Plus", P < 0.05) %>% select(ID1, ID2, !!sym(var))
+  
+  id_data <- tibble(ID, cluster) %>% mutate(cluster_ind = as.integer(cluster))
+  
+  set.seed(15)
+  pdf(paste0("data/Figure/Figure4/FigureS4D/", colony, ".pdf"), width = 3, height = 3)
+  net_ss <- graph.data.frame(d = d_syn, vertices = id_data, directed = FALSE)
+  E(net_ss)$width <- d_syn %>% pull(!!sym(var)) * 0.1
+  V(net_ss)$color <- colorlist[V(net_ss)$cluster_ind]
+  w <- d_syn %>% pull(!!sym(var))
+  c = (1 - ((w-min(w)) / (max(w)-min(w)))) * 0.8
+  plot(net_ss, edge.color = rgb(c,c,c), 
+       vertex.label = NA, vertex.frame.color = NA, vertex.label.color = "black", 
+       vertex.label.cex = 0.1, vertex.size = 10)
+  dev.off()
+}
+
+#run
+for(i in 1:5){
+  var <- "z_value"
+  net_vis_z_behtype(zv_syntime, i, var)
+}
+```
+
+
+#3 Statistical analysis using synchrony index
+
+##Add individual attribute
+```{r}
+zv_syntime_att <- zv_syntime %>% 
+  left_join(ID_att_1, by = join_by(Colony, ID1)) %>% 
+  left_join(ID_att_2, by = join_by(Colony, ID2)) %>% 
+  mutate(Sig = case_when(
+    Sign == "Plus" & P < 0.05 ~ "Syn", Sign == "Minus" & P < 0.05 ~ "Asyn", TRUE ~ "NS")
+    ) %>% 
+  mutate(Sig = factor(Sig, levels = c("Syn", "NS", "Asyn"))) %>% 
+  select(Colony, ID1, ID2, Comb, z_value, Sig,
+         Caste1, Caste2, Sex1, Sex2, AgeD1, AgeD2, Weight1, Weight2)
+
+zv_syntime_att_t <- zv_syntime_att %>% 
+  select(Colony, ID1 = ID2, ID2 = ID1, Comb, z_value, Sign, P, Sig,
+         Caste1 = Caste2, Caste2 = Caste1, Sex1 = Sex2, Sex2 = Sex1, 
+         AgeD1 = AgeD2, AgeD2 = AgeD1, Weight1 = Weight2, Weight2 = Weight1)
+zv_syntime_att_all <- zv_syntime_att %>% bind_rows(zv_syntime_att_t) %>% arrange(Colony, Comb)
+```
+
+##Colony-level (Figures S4A & 4F)
+```{r}
+#significant/ns proportion per colony (figure S4A)
+zv_syntime_att_prop <- zv_syntime_att %>% 
+  group_by(Colony, Sig) %>% summarise(n = n()) %>% mutate(p = n / sum(n))
+
+ggplot(data = zv_syntime_att_prop, aes(x = Colony, y = p, fill = Sig)) + 
+  geom_bar(stat = "identity", position = "stack", width = 0.7) + 
+  scale_fill_manual(values = c("#E6855E", "#BEBEBE", "#44A5CB")) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1.5, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure4/FigureS4A.pdf", width = 3, height = 4.5, units = "in")
+
+#model
+lm_syntime_colony <- lm(data = zv_syntime_att %>% mutate(Colony = as.factor(Colony)), 
+                        formula = z_value ~ Colony)
+summary(lm_syntime_colony)
+#Multiple R-squared:  0.1524,	Adjusted R-squared:  0.1489 
+
+#deviation of EMMs from shuffling control (0)
+emm <- emmeans(lm_syntime_colony, ~ Colony)
+test_res <- test(emm, null = 0) %>% as_tibble()
+write.csv(test_res, row.names = F, "data/statistical_result/Figure4F.csv")
+
+#visualization (figure 4F)
+p_lm_syntime_colony <- ggpredict(lm_syntime_colony, terms = c("Colony [all]"))
+ggplot() + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey") + 
+  geom_beeswarm(data = zv_syntime_att, aes(x = Colony, y = z_value, color = Sig), 
+                size = 0.8, cex = 1, alpha = 0.75) + 
+  geom_errorbar(data = p_lm_syntime_colony, 
+                aes(x = x, ymax = predicted, ymin = predicted),
+                linewidth = 1, width = 0.5) + 
+  scale_color_manual(values = c("#F57446", "#595757", "#669DC8")) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1.25, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure4/Figure4F.pdf", width = 4, height = 5, units = "in")
+```
+
+##Caste combination (Figure 4G)
+```{r}
+#data
+zv_syntime_att_castecomb <- zv_syntime_att %>% 
+  unite("Caste_comb", c(Caste1, Caste2), sep = "_", remove = F) %>% 
+  mutate(Caste_comb = if_else(Caste_comb == "N_B", "B_N", Caste_comb))
+
+#model
+lmm_syntime_castecomb <- lmerTest::lmer(
+  data = zv_syntime_att_castecomb, formula = z_value ~ Caste_comb + (1|Colony)
+)
+summary(lmm_syntime_castecomb)
+r.squaredGLMM(lmm_syntime_castecomb)
+#R2m 0.147708 R2c 0.308726
+Anova(lmm_syntime_castecomb, test.statistic = "Chisq")
+##x2=213.27, Df=2, p<0.001
+
+#pairwise comparison
+emm_res <- emmeans(lmm_syntime_castecomb, pairwise ~ Caste_comb)
+pair_res <- pairs(emm_res, adjust = "holm") %>% as_tibble()
+write.csv(pair_res, row.names = F, "data/statistical_result/Figure4G.csv")
+
+#visualization
+p_lmm_syntime_castecomb <- ggpredict(lmm_syntime_castecomb, terms = c("Caste_comb [all]"))
+ggplot() + 
+  geom_beeswarm(data = zv_syntime_att_castecomb, aes(x = Caste_comb, y = z_value), 
+                size = 0.8, cex = 0.95, alpha = 0.4) + 
+  geom_errorbar(data = p_lmm_syntime_castecomb, 
+                aes(x = x, ymax = predicted, ymin = predicted),
+                size = 1, width = 0.5) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1.5, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure4/Figure4G.pdf", width = 4, height = 6, units = "in")
+```
+
+##Sex combination (Figures S4B & S4C)
+```{r}
+#data construction
+zv_syntime_att_sexcomb <- zv_syntime_att %>% 
+  unite("Sex_comb", c(Sex1, Sex2), sep = "_", remove = F) %>% 
+  mutate(Sex_comb = case_when(
+    Sex_comb == "F_BF" ~ "BF_F", 
+    Sex_comb == "M_BF" ~ "BF_M", 
+    Sex_comb == "F_BM" ~ "BM_F", 
+    Sex_comb == "M_BM" ~ "BM_M", 
+    Sex_comb == "M_F" ~ "F_M", 
+    TRUE ~ Sex_comb
+    )) %>% 
+  filter(Sex_comb != "BF_BM", Sex_comb != "BM_BF")
+
+
+#B-NB data
+zv_syntime_att_sexcomb_bnb <- zv_syntime_att_sexcomb %>% filter(Caste1 == "B", Caste2 == "N")
+lmm_syntime_sexcomb_bnb <- lmerTest::lmer(
+  data = zv_syntime_att_sexcomb_bnb, 
+  formula = z_value ~ Sex_comb + (1|Colony)
+)
+r.squaredGLMM(lmm_syntime_sexcomb_bnb)
+#R2m 0.021192 R2c 0.2977371
+Anova(lmm_syntime_sexcomb_bnb, test.statistic = "Chisq")
+##x2=5.5183, Df=3, p=0.1375
+emm_res <- emmeans(lmm_syntime_sexcomb_bnb, pairwise ~ Sex_comb)
+pair_res <- pairs(emm_res, adjust = "holm") %>% as_tibble()
+write.csv(pair_res, row.names = F, "data/statistical_result/FigureS4B.csv")
+
+lmm_syntime_sexcomb_bnb_p <- ggpredict(lmm_syntime_sexcomb_bnb, terms = "Sex_comb")
+ggplot() + 
+  geom_beeswarm(data = zv_syntime_att_sexcomb_bnb, 
+                aes(x = Sex_comb, y = z_value), 
+                size = 1.5, cex = 2.5, alpha = 0.4) + 
+  geom_errorbar(data = lmm_syntime_sexcomb_bnb_p, 
+                aes(x = x, ymax = predicted, ymin = predicted),
+                size = 1, width = 0.5) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1.65, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure4/FigureS4B.pdf", width = 2.5, height = 4, units = "in")
+
+
+#NB-NB data
+zv_syntime_att_sexcomb_nbnb <- zv_syntime_att_sexcomb %>% filter(Caste1 == "N", Caste2 == "N")
+lmm_syntime_sexcomb_nbnb <- lmerTest::lmer(
+  data = zv_syntime_att_sexcomb_nbnb, 
+  formula = z_value ~ Sex_comb + (1|Colony)
+)
+r.squaredGLMM(lmm_syntime_sexcomb_nbnb)
+#R2m 0.01183747 R2c 0.2050665
+Anova(lmm_syntime_sexcomb_nbnb, test.statistic = "Chisq")
+##x2=11.533, Df=2, p=0.003
+emm_res <- emmeans(lmm_syntime_sexcomb_nbnb, pairwise ~ Sex_comb)
+pair_res <- pairs(emm_res, adjust = "holm") %>% as_tibble()
+write.csv(pair_res, row.names = F, "data/statistical_result/FigureS4C.csv")
+
+lmm_syntime_sexcomb_nbnb_p <- ggpredict(lmm_syntime_sexcomb_nbnb, terms = "Sex_comb")
+ggplot() + 
+  geom_beeswarm(data = zv_syntime_att_sexcomb_nbnb, 
+                aes(x = Sex_comb, y = z_value), 
+                size = 1, cex = 1.5, alpha = 0.4) + 
+  geom_errorbar(data = lmm_syntime_sexcomb_nbnb_p, 
+                aes(x = x, ymax = predicted, ymin = predicted),
+                size = 1, width = 0.5) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1.65, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure4/FigureS4C.pdf", width = 2.5, height = 4, units = "in")
+```
+
+##Behavioral cluster combination (Figure 4H)
+```{r}
+#data
+d_behtype_mean <- read.csv("data/processed_data/representative_cluster.csv")
+d_behtype_mean1 <- d_behtype_mean %>% select(Colony, ID1 = ID, Cluster1 = Cluster)
+d_behtype_mean2 <- d_behtype_mean %>% select(Colony, ID2 = ID, Cluster2 = Cluster)
+
+zv_syntime_att_behtype_comb <- zv_syntime_att %>% 
+  left_join(d_behtype_mean1, by = join_by(Colony, ID1)) %>% 
+  left_join(d_behtype_mean2, by = join_by(Colony, ID2)) %>% 
+  drop_na(everything()) %>% 
+  unite("Cluster_comb", c(Cluster1, Cluster2), sep = "_", remove = F) %>% 
+  mutate(Cluster_comb = case_when(
+    Cluster_comb == "2_1" ~ "1_2", Cluster_comb == "3_1" ~ "1_3", Cluster_comb == "4_1" ~ "1_4", 
+    Cluster_comb == "5_1" ~ "1_5", Cluster_comb == "6_1" ~ "1_6", Cluster_comb == "7_1" ~ "1_7", 
+    Cluster_comb == "3_2" ~ "2_3", Cluster_comb == "4_2" ~ "2_4", Cluster_comb == "5_2" ~ "2_5", 
+    Cluster_comb == "6_2" ~ "2_6", Cluster_comb == "7_2" ~ "2_7", 
+    Cluster_comb == "4_3" ~ "3_4", Cluster_comb == "5_3" ~ "3_5", Cluster_comb == "6_3" ~ "3_6", 
+    Cluster_comb == "7_3" ~ "3_7", 
+    Cluster_comb == "5_4" ~ "4_5", Cluster_comb == "6_4" ~ "4_6", Cluster_comb == "7_4" ~ "4_7", 
+    Cluster_comb == "6_5" ~ "5_6", Cluster_comb == "7_5" ~ "5_7", 
+    Cluster_comb == "7_6" ~ "6_7", 
+    TRUE ~ Cluster_comb
+    )) %>% 
+  mutate(Cluster_comb = as.factor(Cluster_comb))
+
+#model
+lmm_syntime <- lmerTest::lmer(data = zv_syntime_att_behtype_comb, 
+                              formula = z_value ~ 1 + (1|Colony))
+syntime_mean <- fixef(lmm_syntime)["(Intercept)"]
+
+lmm_syntime_behtypecomb <- lmerTest::lmer(
+  data = zv_syntime_att_behtype_comb, 
+  formula = z_value ~ Cluster_comb + (1|Colony)
+)
+r.squaredGLMM(lmm_syntime_behtypecomb)
+#R2m 0.2266085 R2c 0.3715926
+Anova(lmm_syntime_behtypecomb, test.statistic = "Chisq")
+##x2=348.96, Df=27, p<0.001
+
+#deviation of EMMs from mean (syntime_chance)
+emm <- emmeans(lmm_syntime_behtypecomb, ~ Cluster_comb)
+test_res <- test(emm, null = syntime_mean) %>% as_tibble()
+write.csv(test_res, row.names = F, "data/statistical_result/Figure4H.csv")
+
+#visualization
+zv_syntime_att_all_behtype_comb <- zv_syntime_att_all %>% 
+  left_join(d_behtype_mean1, by = join_by(Colony, ID1)) %>% 
+  left_join(d_behtype_mean2, by = join_by(Colony, ID2)) %>% 
+  drop_na(everything()) %>% 
+  mutate(Cluster1 = as.factor(Cluster1), Cluster2 = as.factor(Cluster2))
+lmm_syntime_all_behtypecomb <- lmerTest::lmer(
+  data = zv_syntime_att_all_behtype_comb, 
+  formula = z_value ~ Cluster1 * Cluster2 + (1|Colony)
+)
+lmm_syntime_all_behtypecomb_p <- ggpredict(lmm_syntime_all_behtypecomb, terms = c("Cluster1 [all]", "Cluster2 [all]"))
+colorlist <- c("#BE5378", "#CE7754", "#DFC44E", "#54B345", "#3B98B2", "#5F7EB2", "#808080")
+ggplot() + 
+  geom_hline(yintercept = syntime_mean, linetype = "dashed", color = "grey") + 
+  geom_violin(data = zv_syntime_att_all_behtype_comb, 
+              aes(x = Cluster1, y = z_value, color = Cluster2),
+              position = position_dodge(width = 0.8), width = 0.5, scale = "width") + 
+  geom_errorbar(data = lmm_syntime_all_behtypecomb_p, 
+                aes(x = x, ymax = predicted, ymin = predicted, color = group), 
+                position = position_dodge(width = 0.8), size = 1, width = 0.5) + 
+  scale_color_manual(values = colorlist) + 
+  theme_classic() + 
+  theme(aspect.ratio = 0.25, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure4/Figure4H.pdf", width = 16, height = 4, units = "in")
+```
+
+
+
+

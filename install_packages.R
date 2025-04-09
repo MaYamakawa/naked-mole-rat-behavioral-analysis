@@ -1,0 +1,22 @@
+install.packages(c(
+  "bestNormalize",
+  "broom",
+  "car",
+  "data.table",
+  "emmeans",
+  "ggraph",
+  "ggeffects",
+  "ggbeeswarm",
+  "igraph",
+  "imager",
+  "lmerTest",
+  "magick",
+  "MASS",
+  "MuMIn",
+  "nnet",
+  "parallel",
+  "performance",
+  "pheatmap",
+  "scales",
+  "tidyverse"
+))

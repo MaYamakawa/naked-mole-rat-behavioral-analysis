@@ -1,0 +1,671 @@
+---
+title: "Figure 1"
+output: html_notebook
+---
+
+#Basic information
+
+```{r}
+#total individual information data
+ID_att <- read.csv("data/pre_info_data/individual_information.csv") %>% mutate(Birth = as.Date(Birth))
+
+#colony
+colonyname <- unique(ID_att$Colony)
+#"2B" "2D" "HG" "HT" "LOC"
+
+#experimental day
+dayname <- replicate(5, character(0), simplify = FALSE)
+for(i in 1:5){
+  colony <- colonyname[i]
+  dayname[[i]] <- list.files(paste0("data/processed_data/table_data_with_nan_filled_by_nest/", colony)) %>% 
+    strsplit(".csv") %>% unlist()
+}
+
+#ID
+id <- ID_att$ID
+
+id_2b <- ID_att %>% filter(Colony == "2B") %>% pull(ID)
+#"M14"  "M4"   "2B32" "2B33" "2B34" "2B35" "2B36" "2B37" "2B38" "2B39" "2B40" "2B41"
+#"2B42" "2B43" "2B44" "2B45" "2B46" "2B47" "2B48" "2B49" "2B50" "2B51"
+
+id_2d <- ID_att %>% filter(Colony == "2D") %>% pull(ID)
+#"2D11" "H11"  "2D12" "2D13" "2D16" "2D19" "2D23" "2D24" "2D26"
+#"2D28" "2D29" "2D30" "2D31" "2D32" "2D33" "2D34" "2D35"
+
+id_hg <- ID_att %>% filter(Colony == "HG") %>% pull(ID)
+#"H13"  "G16"  "HG4"  "HG5"  "HG7"  "HG8"  "HG10" "HG11" "HG12" "HG13"
+#"HG14" "HG15" "HG16" "HG18" "HG19" "HG21" "HG22" "HG23" "HG24"
+
+id_ht <- ID_att %>% filter(Colony == "HT") %>% pull(ID)
+#"R21"  "L63"  "HT1"  "HT2"  "HT3"  "HT4"  "HT5"  "HT6"  "HT7"  "HT9"  "HT10"
+#"HT11" "HT12" "HT13" "HT14" "HT15" "HT16" "HT17" "HT18" "HT19" "HT20" "HT21"
+
+id_loc <- ID_att %>% filter(Colony == "LOC") %>% pull(ID)
+#"L55"   "OC1"   "LOC1"  "LOC2"  "LOC4"  "LOC5"  "LOC6"  "LOC7"  "LOC8"  "LOC9"  "LOC10"
+#"LOC11" "LOC13" "LOC14" "LOC15" "LOC16" "LOC17" "LOC18" "LOC19" "LOC20" "LOC22" "LOC23"
+
+idlist <- list(id_2b, id_2d, id_hg, id_ht, id_loc)
+
+#colony size
+sizevec <- c(length(id_2b), length(id_2d), length(id_hg), length(id_ht), length(id_loc))
+#22 17 19 22 22
+
+#number of combination
+combsizevec <- sizevec * (sizevec - 1) /2
+#231, 136, 171, 231, 231
+
+#caste
+caste <- ID_att$Caste
+caste_2b <- ID_att %>% filter(Colony == "2B") %>% pull(Caste)
+caste_2d <- ID_att %>% filter(Colony == "2D") %>% pull(Caste)
+caste_hg <- ID_att %>% filter(Colony == "HG") %>% pull(Caste)
+caste_ht <- ID_att %>% filter(Colony == "HT") %>% pull(Caste)
+caste_loc <- ID_att %>% filter(Colony == "LOC") %>% pull(Caste)
+castelist <- list(caste_2b, caste_2d, caste_hg, caste_ht, caste_loc)
+```
+
+#Figure 1
+
+##Data processing
+```{r}
+#Function
+data_const <- function(i){
+  
+  colony <- colonyname[i]
+  id <- idlist[[i]]
+  size <- length(id)
+  dataset <- dayname[[i]]
+  
+  for(name in dataset){
+    
+    d <- fread(paste0("data/processed_data/table_data_with_nan_filled_by_nest/", colony, "/", name, ".csv")) %>% 
+      rename_with(~ ID_att$ID[match(., ID_att$IDnumber)], .cols = -Time)
+    nest <- fread(paste0("data/processed_data/room_def_with_nan/", colony, "/", name, ".csv"), 
+                  colClasses = c("double","character","character","character")) 
+    dl <- d %>% pivot_longer(cols = -1, names_to = "ID", values_to = "Loc")
+    dl$ID <- factor(dl$ID, levels = id)
+    
+    dl_r <- dl %>% left_join(nest) %>% group_by(ID) %>% arrange(ID) #Add chamber information
+    
+    #Converts to event data
+    star_t <- d %>% slice_head() %>% pull(Time)
+    last_t <- d %>% slice_tail() %>% pull(Time)
+    dl_r_ev <- dl_r %>% 
+      mutate(Loc_lag = lag(Loc, n=1), Nest_lag = lag(Nest, n=1), Toilet_lag = lag(Toilet, n=1)) %>% 
+      mutate(Loc_cp = if_else(Loc != Loc_lag | is.na(Loc_lag) == TRUE, 1, 0)) %>% 
+      filter(Loc_cp == 1) %>% 
+      mutate(Time_lead = lead(Time, n=1)) %>% 
+      mutate(Time_lead = if_else(is.na(Time_lead) == TRUE, last_t + 0.1, Time_lead)) %>% 
+      mutate(Duration = round(Time_lead - Time, digits=1)) %>% 
+      mutate(Event = cumsum(Loc_cp)) %>% 
+      select(ID, Event, Time, Duration, Loc, Nest, Toilet, Garbage)
+    
+    #Detailed definition of stay events on event data
+    dl_r_ev_beh <- dl_r_ev %>% 
+      #Garbage definition modification
+      mutate(Garbage = case_when(
+        Garbage == "A" ~ list(c("A", "1", "3")),
+        Garbage == "B" ~ list(c("B", "1", "2", "4")),
+        Garbage == "C" ~ list(c("C", "2", "5")),
+        Garbage == "D" ~ list(c("D", "3", "6", "8")),
+        Garbage == "E" ~ list(c("E", "4", "6", "7", "9")),
+        Garbage == "F" ~ list(c("F", "5", "7", "10")),
+        Garbage == "G" ~ list(c("G", "8", "11")),
+        Garbage == "H" ~ list(c("H", "9", "11", "12")),
+        Garbage == "I" ~ list(c("I", "10", "12"))
+      )) %>% 
+      #Definition of nest adjacent chambers
+      mutate(NestNei = case_when(
+        Nest == "A" ~ list(c("B", "D")),
+        Nest == "B" ~ list(c("A", "C", "E")),
+        Nest == "C" ~ list(c("B", "F")),
+        Nest == "D" ~ list(c("A", "E", "G")),
+        Nest == "E" ~ list(c("B", "D", "F", "H")),
+        Nest == "F" ~ list(c("C", "E", "I")),
+        Nest == "G" ~ list(c("D", "H")),
+        Nest == "H" ~ list(c("E", "G", "I")),
+        Nest == "I" ~ list(c("F", "H"))
+      )) %>% 
+      #Definition of nest adjacent tunnels
+      mutate(NestTun = case_when(
+        Nest == "A" ~ list(c("1", "3")),
+        Nest == "B" ~ list(c("1", "2", "4")),
+        Nest == "C" ~ list(c("2", "5")),
+        Nest == "D" ~ list(c("3", "6", "8")),
+        Nest == "E" ~ list(c("4", "6", "7", "9")),
+        Nest == "F" ~ list(c("5", "7", "10")),
+        Nest == "G" ~ list(c("8", "11")),
+        Nest == "H" ~ list(c("9", "11", "12")),
+        Nest == "I" ~ list(c("10", "12"))
+      )) %>% 
+      #Define stay events in detail
+      mutate(Nest_lead  = lead(Nest, n=1),
+             Toilet_lead = lead(Toilet, n=1),
+             NestTun_lead = lead(NestTun, n=1)) %>% 
+      rowwise() %>% 
+      mutate(Beh_det = case_when(
+        (Loc == Nest | Loc == Nest_lead) & Duration > 600 ~ "Nest_l",
+        (Loc == Nest | Loc == Nest_lead) & Duration <= 600 ~ "Nest_s",
+        (Loc %in% pluck(NestTun) | Loc %in% pluck(NestTun_lead)) & Duration > 600 ~ "NestTun_l",
+        (Loc %in% pluck(NestTun) | Loc %in% pluck(NestTun_lead)) & Duration <= 600 ~ "NestTun_s",
+        Loc %in% pluck(NestNei) & Time == 0.1 & Duration > 1800 ~ "NestNeiFirst_l",
+        Loc == Toilet & Loc == Toilet_lead & Duration > 600 ~ "Toilet_l",
+        Loc == Toilet & Loc == Toilet_lead & Duration <= 600 ~ "Toilet_s",
+        Loc %in% pluck(Garbage) & Duration > 600 ~ "Garbage_l",
+        Loc %in% pluck(Garbage) & Duration <= 600 ~ "Garbage_s",
+        Duration > 600 ~ "Others_l",
+        Duration <= 600 ~ "Others_s"
+      )) %>% 
+      ungroup() %>% 
+      select(ID, Event, Time, Duration, Loc, Beh_det, Nest, Toilet, Garbage, NestTun)
+    
+    dl_r_ev_beh_l <- dl_r_ev_beh %>% 
+      select(1:6) %>% group_by(ID) %>% 
+      mutate(count = as.integer(Duration * 10)) %>% 
+      uncount(count) %>% 
+      mutate(Time_start = Time, Time = ((star_t*10):(last_t*10))/10)
+    
+    #subnest = chambers with >4 individuals staying at the same time
+    nestsub_loc <- dl_r_ev_beh_l %>% 
+      ungroup() %>% arrange(Time) %>% 
+      filter(Beh_det == "Others_l" | Beh_det == "Toilet_l") %>% 
+      group_by(Time, Loc) %>% 
+      summarise(n = n()) %>% 
+      filter(n > 4) %>% 
+      select(-n) %>% ungroup() %>% 
+      group_by(Time) %>% nest() %>% 
+      mutate(NestSub = map(data, ~ as.vector(.$Loc))) %>% 
+      select(Time, NestSub) %>% ungroup()
+    
+    #Add stay event definitions by adding subnest data to event data
+    dl_r_ev_beh <- dl_r_ev_beh %>% 
+      left_join(nestsub_loc) %>% 
+      mutate(NestSub_lead  = lead(NestSub, n=1)) %>% 
+      rowwise() %>% 
+      mutate(Beh_det = case_when(
+        (Loc %in% pluck(NestSub) | Loc %in% pluck(NestSub_lead)) & 
+          (Beh_det == "Others_l" | Beh_det == "Toilet_l") ~ "NestSub_l",
+        TRUE ~ Beh_det
+        )) %>% 
+      ungroup() %>% 
+      select(-NestSub_lead)
+    
+    #Add 5 types of stay event columns to event data
+    dl_r_ev_beh <- dl_r_ev_beh %>% 
+      mutate(Beh5 = case_when(
+        Beh_det == "Nest_l" | Beh_det == "NestTun_l" | Beh_det == "NestNeiFirst_l" | Beh_det == "NestSub_l" ~ "Sleep",
+        Beh_det == "Nest_s" ~ "Nest",
+        Beh_det == "Toilet_l" | Beh_det == "Toilet_s" ~ "Toilet",
+        Beh_det == "Garbage_l" | Beh_det == "Garbage_s" ~ "Garbage",
+        Beh_det == "Others_l" | Beh_det == "Others_s" | Beh_det == "NestTun_s" ~ "Others"
+        ))
+    
+    #Correct location in event data
+    dl_r_ev_beh <- dl_r_ev_beh %>% 
+      mutate(Loc = if_else(Beh_det == "NestTun_l" | Beh_det == "NestNeiFirst_l", Nest, Loc))
+    dl_r_ev_beh_l <- dl_r_ev_beh %>% 
+      select(ID, Event, Time, Duration, Loc, Beh_det, Beh5) %>% 
+      group_by(ID) %>% 
+      mutate(count = as.integer(Duration * 10)) %>% 
+      uncount(count) %>% 
+      mutate(Time = ((star_t*10):(last_t*10))/10) %>% 
+      select(Time, ID, Loc, Beh_det, Beh5)
+    
+    #Create rest data and added reference columns for disturbance phase determination
+    Time <- (1:864000)/10
+    Time10s <- rep(1:8640, each=100)
+    Time10s_d <- tibble(Time, Time10s)
+    d_sleep <- dl_r_ev_beh_l %>% 
+      ungroup() %>% select(Time, ID, Beh_det) %>% 
+      #Calculate the number of resting members at each time point
+      mutate(Sleep = if_else(Beh_det == "Nest_l" | Beh_det == "NestTun_l" | Beh_det == "NestNeiFirst_l", 1, 0)) %>% 
+      group_by(Time) %>% 
+      summarise(n = sum(Sleep)) %>% 
+      #Calculate average number (rate) of resting members per 10 sec
+      left_join(Time10s_d, by = join_by(Time)) %>% 
+      group_by(Time10s) %>% 
+      summarise(Sleep = mean(n)) %>% 
+      mutate(Sleep_rate = Sleep/size) %>% 
+      #Resting individuals marked data below 25% and below 10%
+      mutate(one_forth = if_else(Sleep_rate <= 0.25, 1, 0),
+             one_tenth = if_else(Sleep_rate <= 0.1, 1, 0)) %>% 
+      mutate(one_forth_lag = lag(one_forth, n=1)) %>% 
+      mutate(one_forth_cp = if_else(one_forth != one_forth_lag, 1, 0))
+    #Event column every 10sec based on 25%
+    max <- d_sleep %>% nrow()
+    ev <- rep(0, max); ev[1] = 1
+    cp <- d_sleep$one_forth_cp
+    for(j in 2:max){ev[j] = ev[j-1] + cp[j]}
+    d_sleep <- d_sleep %>% mutate(event = ev) %>% select(-6,-7)
+    
+    #Determine disturbance phase & generate time-series proportion of resting members data
+    dist_event <- d_sleep %>% 
+      filter(one_forth == 1 & one_tenth == 1) %>% 
+      select(event) %>% 
+      distinct(event, .keep_all = FALSE) %>% 
+      unlist() %>% as.vector()
+    d_sleep <- d_sleep %>% 
+      mutate(disturb = if_else(event %in% dist_event, 1, 0)) %>% 
+      select(1,2,3,6,7)
+    write.csv(d_sleep, row.names = F, 
+              paste0("data/processed_data/sleep_sum_data/", colony, "/", name, ".csv")) 
+  
+    #Add disturbance phase to location data (updated location data)
+    d_sleep_dis <- d_sleep %>% select(Time10s, Disturb = disturb)
+    dl_r_ev_beh_l_loc <- dl_r_ev_beh_l %>% 
+      select(Time, ID, Loc) %>% ungroup() %>% 
+      pivot_wider(names_from = ID, values_from = Loc) %>% 
+      mutate(Time10s = ceiling(Time/10)) %>% 
+      left_join(d_sleep_dis, by = join_by(Time10s)) %>% 
+      select(-Time10s)
+    write.csv(dl_r_ev_beh_l_loc, row.names = F, 
+              paste0("data/processed_data/loc_data/", colony, "/", name, ".csv"))
+    
+    #Add disturbance phase to stay event data (updated stay event data)
+    dl_r_ev_beh <- dl_r_ev_beh %>% 
+      mutate(Time10s = ceiling(Time/10)) %>% 
+      left_join(d_sleep_dis, by = join_by(Time10s)) %>% 
+      select(-Time10s) %>% 
+      mutate(Disturb_lead = lead(Disturb, n=1)) %>% 
+      mutate(Disturb = if_else(Disturb_lead == 0, 0, Disturb)) %>% 
+      select(ID, Event, Time, Duration, Loc, Beh_det, Beh5, Disturb)
+    write.csv(dl_r_ev_beh, row.names = F, 
+              paste0("data/processed_data/beh_event_data/", colony, "/", name, ".csv"))
+    
+    #Summarize event data by type of stay event
+    dl_r_ev_beh_bs <- dl_r_ev_beh_mini %>% 
+      filter(Disturb == 0) %>% 
+      group_by(ID, Beh5) %>% 
+      ##Calculate total duration, number of times, mean duration, SD
+      summarise(
+        Sum = round(sum(Duration), digits=1), 
+        N = n(), 
+        Mean = mean(Duration), 
+        SD = sd(Duration)
+        )
+    dl_r_ev_beh_bs_w <- dl_r_ev_beh_bs %>% pivot_wider(names_from = Beh5, values_from = c(Sum, N, Mean, SD)) 
+    write.csv(dl_r_ev_beh_bs_w, row.names = F, 
+              paste0("data/processed_data/beh_event_summary_data/", colony, "/", name, ".csv")) 
+  }
+}
+
+#Run function
+for(i in 1:5){data_const(i)}
+```
+
+
+##Visualization of time-series location for each member (Figure 1C)
+```{r}
+#function
+time_loc_vis <- function(i, j){
+  colony <- colonyname[i]
+  id <- idlist[[i]]
+  day <- dayname[[i]][j]
+  d <- fread(paste0("data/processed_data/loc_data/", colony, "/", day, ".csv"), check.names = F) %>% 
+    select(-V1) %>% 
+    mutate(Minute = floor((Time-0.05)/60)) %>% 
+    distinct(Minute, .keep_all = T) %>% 
+    select(1:(length(id)+1)) %>% 
+    pivot_longer(cols = -1, names_to = "ID", values_to = "Location") %>% 
+    mutate(ID = factor(ID, levels = rev(id))) %>% 
+    mutate(Time = as.factor(Time)) %>% 
+    mutate(Location = case_when(
+      Location == "1" ~ "T", Location == "2" ~ "T", Location == "3" ~ "T", Location == "4" ~ "T", 
+      Location == "5" ~ "T", Location == "6" ~ "T", Location == "7" ~ "T", Location == "8" ~ "T", 
+      Location == "9" ~ "T", Location == "10" ~ "T", Location == "11" ~ "T", Location == "12" ~ "T", 
+      TRUE ~ Location))
+  
+  breaks <- c("","A","B","C","D","E","F","G","H","I","T")
+  values <- c("white","#64C97D","#97C964","#C9B064","#64C9C9","#918077",
+              "#C96464","#647DC9","#9764C9","#C964B0","lightgrey")
+  ggplot(d, aes(x=Time, y=ID, fill=Location)) + 
+    geom_tile(height = 1) + 
+    theme_void() + 
+    theme(aspect.ratio = 0.2, legend.position = "none") + 
+    scale_fill_manual(breaks = breaks, values = values)
+  ggsave(paste0("data/Figure/Figure1/Figure1C/", day, ".pdf"), width = 16, height = 4, units = "in")
+}
+
+#run function
+for(i in 1:5){
+  for(j in 1:30){
+    time_loc_vis(i, j)
+  }
+}
+```
+
+
+##Number of transition of functional chamber (Pre-observation data, Figure S1B)
+```{r}
+#data
+d_cf_pre <- read.csv("data/pre_info_data/chamber_function.csv") %>% 
+  mutate(
+    Date = as.Date(Date), Nest = as.character(Nest), Toilet = as.character(Toilet), Garbage = as.character(Garbage)
+  )
+d_cf_pre_transition <- d_cf_pre %>%
+  arrange(Week, Colony, Date, Time) %>% 
+  group_by(Week, Colony) %>%
+  mutate(
+    Nest_prev = lag(Nest),
+    Toilet_prev = lag(Toilet),
+    Garbage_prev = lag(Garbage),
+    Nest_changed = if_else(Nest != Nest_prev, 1, 0),
+    Toilet_changed = if_else(Toilet != Toilet_prev, 1, 0),
+    Garbage_changed = if_else(Garbage != Garbage_prev, 1, 0)
+  ) %>%
+  summarise(
+    Nest = sum(Nest_changed, na.rm = TRUE),
+    Toilet = sum(Toilet_changed, na.rm = TRUE),
+    Garbage = sum(Garbage_changed, na.rm = TRUE),
+    .groups = "drop"
+  ) %>% 
+  pivot_longer(
+    cols = c(Nest, Toilet, Garbage), names_to = "Chamber", values_to = "Count"
+  ) %>% 
+  mutate(Chamber = factor(Chamber, levels = c("Nest", "Toilet", "Garbage")))
+
+#plot
+ggplot(d_cf_pre_transition) + 
+  geom_violin(aes(x = Chamber, y = Count/13), width = 0.8, scale = "width") + 
+  geom_boxplot(aes(x = Chamber, y = Count/13), size = 0.5, width = 0.2) + 
+  scale_y_continuous(expand = c(0.01, 0.01)) + 
+  theme_classic() + theme(aspect.ratio = 1)
+ggsave("data/Figure/Figure1/FigureS1B.pdf", width = 4.5, height = 4.5, units = "in")
+```
+
+##Number of transition of functional chamber (Figure 1D)
+```{r}
+#data
+Colony <- "0"; Day <- "0"; Time1m <- 0
+Nest <- "0"; Garbage <- "0"; Toilet <- "0"
+dt <- tibble(Colony, Day, Time1m, Nest, Garbage, Toilet)
+
+for(i in 1:5){
+  colony <- colonyname[i]
+  dayvector <- dayname[i] %>% unlist()
+  idvector <- id0[i] %>% unlist()
+  
+  for(j in 1:30){
+    day <- dayvector[j]
+    d <- read.csv(paste0("data/processed_data/room_def_with_nan/", colony, "/", day, ".csv"),
+                  colClasses=c("double", "character", "character", "character")) %>% 
+      mutate(Time1m = ceiling((Time-0.05)/60)) %>% 
+      distinct(Time1m, .keep_all = TRUE) %>% 
+      mutate(Colony = colony, Day = day) %>% 
+      select(Colony, Day, Time1m, Nest, Garbage, Toilet)
+    dt <- dt %>% bind_rows(d)
+  }
+}
+dt <- dt %>% slice(-1)
+dts <- dt %>% 
+  group_by(Colony) %>% 
+  mutate(
+    Nest_lag = lag(Nest, 1),
+    Garbage_lag = lag(Garbage, 1),
+    Toilet_lag = lag(Toilet, 1)
+  ) %>% 
+  mutate(
+    Nest_cp = if_else(Nest != Nest_lag, 1, 0),
+    Garbage_cp = if_else(Garbage != Garbage_lag, 1, 0),
+    Toilet_cp = if_else(Toilet != Toilet_lag, 1, 0)
+  ) %>% 
+  replace_na(list(Nest_cp = 0, Garbage_cp = 0, Toilet_cp = 0)) %>% 
+  summarise(
+    Nest_tr = sum(Nest_cp),
+    Garbage_tr = sum(Garbage_cp),
+    Toilet_tr = sum(Toilet_cp)
+  ) %>% 
+  pivot_longer(cols = -1, names_to = "Var", values_to = "N") %>% 
+  mutate(p = N / 30) %>% 
+  mutate(Var = factor(Var, levels = c("Nest_tr","Toilet_tr","Garbage_tr")))
+dts <- dts %>% mutate(p = N / 30)
+
+#plot
+ggplot(dts, aes(x = Var, y = p, fill = Colony)) + 
+  geom_bar(stat = "identity", position = "dodge") + 
+  scale_y_continuous(expand = c(0,0)) + 
+  scale_fill_grey() + 
+  theme_classic() + 
+  theme(aspect.ratio = 0.6, legend.position = "none")
+ggsave("data/Figure/Figure1/Figure1D.pdf", width = 5, height = 3, units = "in")
+```
+
+##Frequency distribution of each type of stay event (Figure 1E)
+```{r}
+#data
+base_path <- "data/processed_data/beh_event_data"
+stay_event_data_total <- map_dfr(colonyname, function(colony) {
+  file <- list.files(file.path(base_path, colony), full.names = TRUE)
+  read_csv(file, show_col_types = FALSE) %>%
+    mutate(Colony = colony) %>%
+    select(-1)
+})
+
+#Nest
+stay_event_data_total_nest <- stay_event_data_total %>% 
+  filter(Disturb == 0, Beh5 == "Nest" | Beh5 == "Sleep") %>% 
+  mutate(Duration_log = log10(Duration))
+
+##kernel density estimation
+density_est <- density(stay_event_data_total_nest$Duration_log)
+peaks <- which(diff(sign(diff(density_est$y))) == -2) + 1
+peak_values <- 10^density_est$x[peaks]
+peak_values #9.960694e-02 6.255060e+00 5.169184e+03
+bottoms <- which(diff(sign(diff(density_est$y))) == 2) + 1
+bottom_values <- 10^density_est$x[bottoms]
+bottom_values #0.1240352 531.0669726
+
+ggplot(stay_event_data_total_nest) + 
+  geom_histogram(aes(x=Duration), bins = 50) + 
+  geom_vline(xintercept = 600, color = "darkorange") + 
+  scale_x_log10(breaks = c(1,10,100,1000,10000), expand = c(0,0)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  theme_classic() + theme(aspect.ratio = 0.3)
+ggsave("data/Figure/Figure1/Figure1E/Nest.pdf", width = 6, height = 1.8, units = "in")
+
+#Toilet, Garbage, Other
+varlist <- c("Toilet", "Garbage", "Others")
+for(var in varlist){
+  d <- stay_event_data_total %>% filter(Disturb == 0, Beh5 == var)
+  ggplot(d) + 
+    geom_histogram(aes(x=Duration), bins = 50) + 
+    scale_x_log10(breaks = c(1,10,100,1000), expand = c(0,0)) + 
+    scale_y_continuous(expand = c(0,0)) + 
+    theme_classic() + theme(aspect.ratio = 0.3)
+  ggsave(paste0("data/Figure/Figure1/Figure1E/", var, ".pdf"), width = 6, height = 1.8, units = "in")
+}
+```
+
+##Visualization of time-series stay event for each member (Figure 1F)
+```{r}
+#function
+time_beh_vis <- function(i, j){
+  colony <- colonyname[i]
+  id <- idlist[[i]]
+  day <- dayname[[i]][j]
+  d <- fread(paste0("data/processed_data/beh_event_data/", colony, "/", day, ".csv")) %>% 
+    select(-V1) %>% 
+    group_by(ID) %>% 
+    mutate(count = as.integer(Duration * 10)) %>% 
+    uncount(count) %>% 
+    mutate(Time = (1:864000)/10) %>% 
+    select(Time, ID, Beh5, Disturb) %>% 
+    mutate(Minute = floor((Time-0.05)/60)) %>% 
+    distinct(Minute, .keep_all = T) %>% 
+    mutate(ID = factor(ID, levels = rev(id)), Time = as.factor(Time))
+  
+  breaks <- c("","Sleep","Nest","Toilet","Garbage","Others")
+  values <- c("lightgrey","white","#64C99B","#C964B0","#918077","#B5B5B6")
+  x_breaks <- c("0.1","10800.1","21600.1","32400.1","43200.1","54000.1","64800.1","75600.1","86400")
+  
+  ggplot(d, aes(x=Time, y=ID, fill=Beh5)) + 
+    geom_tile(height = 1) + 
+    theme_classic() + 
+    theme(aspect.ratio = 0.2, legend.position = "none",
+          axis.text = element_blank(), axis.title = element_blank()) + 
+    scale_fill_manual(breaks = breaks, values = values) + 
+    scale_x_discrete(breaks = x_breaks)
+  ggsave(paste0("data/Figure/Figure1/Figure1F/", day, ".pdf"), width = 16, height = 4, units = "in")
+}
+
+#run function
+for(i in 1:5){
+  for(j in 1:30){
+    time_beh_vis(i, j)
+  }
+}
+```
+
+
+##Construct location + rest data & location + nest/rest data for Figures 4 & 5
+```{r}
+##integrate location data and stay event data
+for(i in 1:5){
+  colony <- colonyname[i]
+  id <- idlist[i] %>% unlist()
+  size <- length(id)
+  dataset <- dayname[[i]]
+  
+  for(name in dataset){
+    d_loc <- fread(paste0("data/processed_data/loc_data/", colony, "/", name, ".csv")) 
+    d_beh <- fread(paste0("data/processed_data/beh_event_data/", colony, "/", name, ".csv")) 
+    Time10 <- rep(1:864000, size)
+    d_beh_l <- d_beh %>% select(ID, Time, Beh5, Duration) %>% 
+      mutate(Duration10 = as.integer(Duration * 10)) %>% 
+      uncount(Duration10) %>% 
+      mutate(Time10 = Time10) %>% 
+      select(-Time, Duration) %>% 
+      mutate(Time = Time10 / 10, ID = factor(ID, levels = id)) %>% 
+      select(Time, ID, Beh5) %>% 
+      arrange(ID, Time)
+    d_loc_l <- d_loc %>% select(c(-V1, -Disturb)) %>% 
+      pivot_longer(cols = -1, names_to = "ID", values_to = "Loc") %>% 
+      mutate(ID = factor(ID, levels = id)) %>% 
+      arrange(ID, Time)
+    d_loc_beh_l <- d_loc_l %>% 
+      bind_cols(d_beh_l %>% select(Beh5)) %>% 
+      mutate(LocSleep = if_else(Beh5 == "Sleep", "S", Loc),
+             LocNest = if_else(Beh5 == "Sleep" | Beh5 == "Nest", "N", Loc))
+    
+    d_loc_beh_l_ls_w <- d_loc_beh_l %>% select(-Loc, -Beh5) %>% 
+      pivot_wider(names_from = ID, values_from = LocSleep) %>% 
+      bind_cols(d_loc %>% select(Disturb)) %>% 
+      filter(Disturb == 0) %>% select(-Disturb)
+    write.csv(d_loc_beh_l_ls_w, row.names = FALSE, 
+              paste0("data/processed_data/locsleep_data/", colony, "/", name, ".csv"))
+    
+    d_loc_beh_l_ln_w <- d_loc_beh_l %>% select(-Loc, -Beh5) %>% 
+      pivot_wider(names_from = ID, values_from = LocNest) %>% 
+      bind_cols(d_loc %>% select(Disturb)) %>% 
+      filter(Disturb == 0) %>% select(-Disturb)
+    write.csv(d_loc_beh_l_ln_w, row.names = FALSE, 
+              paste0("data/processed_data/locsleep_data/", colony, "/", name, ".csv"))
+  }
+}
+```
+
+##Visualization of proportion of resting members (Figure 1G)
+```{r}
+#function
+time_prop_rest_vis <- function(i, j){
+  colony <- colonyname[i]
+  day <- dayname[[i]][j]
+  d <- fread(paste0("data/processed_data/sleep_sum_data/", colony, "/", day, ".csv"))
+  d_2min <- d %>% 
+    mutate(Time120s = ceiling((Time10s-0.1)/12)) %>% 
+    group_by(Time120s) %>% 
+    summarise(Sleep_rate = mean(Sleep_rate))
+  d_dist <- d %>% filter(disturb == 1) %>% 
+    group_by(event) %>% summarise(xmin = min(Time10s)/12, xmax = max(Time10s)/12)
+  
+  ggplot(d_2min) + 
+    geom_hline(yintercept = 0.1, linetype = "dashed", color = "darkgrey", linewidth = 0.1) + 
+    geom_hline(yintercept = 0.25, linetype = "dashed", color = "darkgrey", linewidth = 0.1) + 
+    geom_line(aes(x = Time120s, y = Sleep_rate), linewidth = 0.5) + 
+    geom_rect(data = d_dist, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+              inherit.aes = FALSE, fill = "grey", alpha = 0.2)
+    scale_x_continuous(expand = c(0,0), 
+                       breaks = c(0,90,180,270,360,450,540,630,720), 
+                       labels = c("12:00","15:00","18:00","21:00","24:00","3:00","6:00","9:00","12:00"))
+    scale_y_continuous(breaks = c(0.00,0.25,0.5,0.75,1.00), limits = c(0,1), expand = c(0.01,0.01)) + 
+    theme_classic() + theme(aspect.ratio = 0.15)
+  ggsave(paste0("data/Figure/Figure1/Figure1G/", colony, "/", day, ".pdf"), width = 18, height = 3, units = "in")
+}
+
+#run function
+for(i in 1:5){
+  for(j in 1:30){
+    time_prop_rest_vis(i, j)
+  }
+}
+```
+
+
+##Error check (Figure 1H)
+```{r}
+#data before prcessing
+day <- "0"; n_all <- 0; n_nan <- 0
+for(i in 1:5){
+  colony <- colonyname[i]
+  dayvector <- dayname[[i]]
+  for(name in dayvector){
+    d <- fread(paste0("data/processed_data/table_data_with_nan/", colony, "/", name, ".csv")) %>% 
+      pivot_longer(cols = -1, names_to = "ID", values_to = "Loc")
+    n_all_i <- d %>% nrow()
+    n_nan_i <- d %>% filter(Loc == "") %>% nrow()
+    day <- c(day, name)
+    n_all <- c(n_all, n_all_i)
+    n_nan <- c(n_nan, n_nan_i)
+  }
+}
+day <- day[-1]; n_all <- n_all[-1]; n_nan <- n_nan[-1]
+colony <- rep(colonyname, each = 30)
+nan_d <- tibble(day, n_all, n_nan) %>% mutate(colony = colony, p_nan = n_nan / n_all)
+
+#data after processing
+day <- "0"; n_all <- 0; n_nan <- 0
+for(i in 1:5){
+  colony <- colonyname[i]
+  dayvector <- dayname[[i]]
+  for(name in dayvector){
+    d <- fread(paste0("data/processed_data/loc_data/", colony, "/", name, ".csv")) %>% 
+      filter(Disturb == 0) %>% 
+      select(-Disturb) %>% 
+      pivot_longer(cols = -1, names_to = "ID", values_to = "Loc")
+    n_all_i <- d %>% nrow()
+    n_nan_i <- d %>% filter(Loc == "") %>% nrow()
+    day <- c(day, name)
+    n_all <- c(n_all, n_all_i)
+    n_nan <- c(n_nan, n_nan_i)
+  }
+}
+day <- day[-1]; n_all <- n_all[-1]; n_nan <- n_nan[-1]
+colony <- rep(colonyname, each = 30)
+nan_df <- tibble(day, n_all, n_nan) %>% mutate(colony = colony, p_nan = n_nan / n_all)
+
+#unify before data and after data
+nan_d_df <- nan_d %>% 
+  mutate(Process = "Before") %>% 
+  bind_rows(nan_df %>% mutate(Process = "After")) %>% 
+  mutate(Process = factor(Process, levels = c("Before", "After")))
+nan_d_df_meansd <- nan_d_meansd %>% 
+  mutate(Process = "Before") %>% 
+  bind_rows(nan_df_meansd %>% mutate(Process = "After")) %>% 
+  mutate(Process = factor(Process, levels = c("Before", "After")))
+
+#plot
+ggplot() + 
+  geom_bar(data = nan_d_df_meansd, 
+           aes(x = Process, y = mean_p_nan, fill = colony), 
+           stat = "identity", position = position_dodge(0.9), width = 0.9) + 
+  geom_errorbar(data = nan_d_df_meansd, 
+                aes(x = Process, y = mean_p_nan, color = colony, 
+                    ymax = mean_p_nan + sd_p_nan, ymin = mean_p_nan - 0.0005), 
+                position = position_dodge(0.9), width = 0.2, size = 0.5) + 
+  scale_y_continuous(limits = c(0,0.03), expand = c(0,0)) + 
+  scale_color_grey() + scale_fill_grey() + 
+  theme_classic() + 
+  theme(aspect.ratio = 0.75, legend.position = "none")
+ggsave("data/Figure/Figure1/Figure1H.pdf", width = 4, height = 3, units = "in")
+```
+

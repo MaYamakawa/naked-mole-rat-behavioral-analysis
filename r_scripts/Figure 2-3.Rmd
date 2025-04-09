@@ -1,0 +1,1026 @@
+---
+title: "Figure 2-3"
+output: html_notebook
+---
+
+#Figure 2
+
+##Data formatting
+```{r}
+#unify data
+id <- c(id_2b, id_2d, id_hg, id_ht, id_loc)
+Colony <- "0"; Day <- "0"; ID <- "0"
+Sum_Garbage <- 0; Sum_Nest <- 0; Sum_Others <- 0; Sum_Sleep <- 0; Sum_Toilet <- 0
+N_Garbage <- 0; N_Nest <- 0; N_Others <- 0; N_Sleep <- 0; N_Toilet <- 0
+Mean_Garbage <- 0; Mean_Nest <- 0; Mean_Others <- 0; Mean_Sleep <- 0; Mean_Toilet <- 0
+SD_Garbage <- 0; SD_Nest <- 0; SD_Others <- 0; SD_Sleep <- 0; SD_Toilet <- 0
+CV_Garbage <- 0; CV_Nest <- 0; CV_Others <- 0; CV_Sleep <- 0; CV_Toilet <- 0 
+dt <- tibble(Colony, Day, ID, 
+            Sum_Garbage, Sum_Nest, Sum_Others, Sum_Sleep, Sum_Toilet, 
+            N_Garbage, N_Nest, N_Others, N_Sleep, N_Toilet, 
+            Mean_Garbage, Mean_Nest, Mean_Others, Mean_Sleep, Mean_Toilet, 
+            SD_Garbage, SD_Nest, SD_Others, SD_Sleep, SD_Toilet, 
+            CV_Garbage, CV_Nest, CV_Others, CV_Sleep, CV_Toilet)
+
+for(i in colonyname){
+  dataset <- dayname[[i]]
+  for(name in dataset){
+    d <- read.csv(paste0("data/processed_data/beh_event_summary_data/", i, "/", name, ".csv")) %>% 
+      mutate(Colony = i, Day = name)
+    dt <- bind_rows(dt, d)
+  }
+}
+
+dt <- dt %>% slice(-1) %>% 
+  mutate(across(c(-c(1:3,19:28)), ~ replace_na(.x, 0))) %>%  
+  mutate(Day = factor(Day, levels = dayname %>% unlist()),
+         ID = factor(ID, levels = id)) %>% 
+  arrange(Day, ID) %>% 
+  mutate(Day = as.character(Day), ID = as.character(ID))
+
+#relationship between n_other and movement tendency
+dt_move <- dt %>% 
+  select(N_Sleep, N_Nest, N_Toilet, N_Garbage, N_Others) %>% 
+  mutate(N_Total = rowSums(.)) %>% 
+  mutate(N_Others_Total = N_Others / N_Total)
+cor.test(dt_move$N_Others, dt_move$N_Total)
+##r=0.9911168, t = 412.11, df = 3058, p-value < 2.2e-16
+dt_move %>% summarize(N_Others_Total_mean = mean(N_Others_Total), N_Others_Total_sd = sd(N_Others_Total))
+##mean=0.7997396	sd=0.06448304	
+
+#add variables(relative to non-rest stay event)
+dta <- dt %>% 
+  select(-c(19:28)) %>% #remove SD column and CV column
+  mutate(Sum_Active = Sum_Garbage + Sum_Nest + Sum_Others + Sum_Toilet) %>% 
+  mutate(
+    Sum_Garbage_relA = Sum_Garbage / Sum_Active,
+    Sum_Nest_relA = Sum_Nest / Sum_Active,
+    Sum_Others_relA = Sum_Others / Sum_Active,
+    Sum_Toilet_relA = Sum_Toilet / Sum_Active,
+    N_Garbage_relA = N_Garbage / Sum_Active,
+    N_Nest_relA = N_Nest / Sum_Active,
+    N_Others_relA = N_Others / Sum_Active,
+    N_Toilet_relA = N_Toilet / Sum_Active
+    )
+
+#confirm existence of 0
+dt %>% filter(Sum_Garbage == 0)
+dt %>% filter(Sum_Nest == 0)
+dt %>% filter(Sum_Others == 0)
+dt %>% filter(Sum_Sleep == 0)
+dt %>% filter(Sum_Toilet == 0)
+dta
+#data transformation
+dta_rel <- dta %>%
+  select(-19) %>% #remove active column
+  #add minimum value to columns including 0 (Sum,N,Mean,Sum_relA,N_relA_Garbage)
+  mutate(across(c(4,9,14,19,23), ~ . + min(.[.!=0]), .names = "f.{.col}")) %>% 
+  #Box-Cox transformation per colony
+  group_by(Colony) %>% 
+  mutate(across(c(26,4:7,27,9:12,28,14:17,29,19:21,30,23:25), 
+                ~ bcPower(., powerTransform(.)$lambda), .names = "bc.{.col}")) %>% 
+  ungroup() %>%
+  #standardization (within day and colony)
+  select(1:3,32:54) %>% 
+  group_by(Colony, Day) %>% 
+  mutate(across(c(2:24), ~ c(scale(.)), .names = "z.{.col}")) %>% 
+  ungroup() %>% select(1:3,27:49)
+
+#behavioral parameter data (23 var)
+colnames(dta_rel) <- c(
+  "Colony","Day","ID",
+  "Sum_Garbage","Sum_Nest","Sum_Others","Sum_Sleep","Sum_Toilet",
+  "N_Garbage","N_Nest","N_Others","N_Sleep","N_Toilet",
+  "Mean_Garbage","Mean_Nest","Mean_Others","Mean_Sleep","Mean_Toilet",
+  "Sum_relA_Garbage","Sum_relA_Nest","Sum_relA_Others","Sum_relA_Toilet",
+  "N_relA_Garbage","N_relA_Nest","N_relA_Others","N_relA_Toilet"
+)
+dta_rel <- dta_rel %>% select(1:3,7,12,17,5,20,10,24,15,6,21,11,25,16,8,22,13,26,18,4,19,9,23,14)
+```
+
+
+##Clustering
+
+###UMAP (first) (Figure S2A)
+```{r}
+config <- umap.defaults
+config$random_state <- 20
+config$n_neighbors <- 5
+
+d_um_t0 <- umap(dta_rel[,4:26], config = config)
+d_um_t0_t <- tibble(as.data.frame(d_um_t0$layout))
+ggplot(d_um_t0_t) + 
+  geom_point(aes(x=V1, y=V2), size=0.2) + 
+  theme_void() + theme(aspect.ratio = 1)
+ggsave("data/Figure/Figure2/FigureS2A.pdf", width = 5, height = 5, units = "in")
+
+dta_rel_umap <- dta_rel %>% bind_cols(d_um_t0_t)
+dta_rel_umap %>% filter(ID == "HT7")
+ggplot() + 
+  geom_point(data = d_um_t0_t , aes(x=V1, y=V2), size=0.2) + 
+  geom_point(data = d_um_t0_t %>% filter(ID == "HT7") , aes(x=V1, y=V2), size=0.2, color="red") + 
+  theme_void() + theme(aspect.ratio = 1)
+#Outlier = HT7 (only one individual)
+
+#remove HT7 from data
+dta_rel2 <- dta_rel %>% filter(ID != "HT7")
+
+id_ht0 <- id_ht[-9]
+caste_ht0 <- c("BF", "BM", rep("NB", 19))
+```
+
+###UMAP (second)
+```{r}
+d_um_t1 <- umap(dta_rel2[,4:26], config = config)
+d_um_t1_t <- tibble(as.data.frame(d_um_t1$layout))
+ggplot(d_um_t1_t) + 
+  geom_point(aes(x=V1, y=V2), size=0.2) + 
+  theme_void() + theme(aspect.ratio = 1)
+```
+
+###UMAP density map
+```{r}
+spectral <- c("#5E4FA2","#3288BD","#66C2A5","#ABDDA4","#E6F598","#FFFFBF",
+              "#FEE08B","#FDAE61","#F46D43","#D53E4F","#9E0142")
+
+#density map (color) visualization function
+umap_densmap_color <- function(d, bw){
+  da_um_t_ggdens <<- ggplot(d, aes(x=V1, y=V2)) + 
+    stat_density_2d(aes(fill=after_stat(density)), contour = F, geom = "raster", 
+                    h = c(bw, bw), n = 500) + 
+    scale_fill_gradientn(colors = spectral) + 
+    theme_void() + 
+    theme(aspect.ratio = 1, legend.position = "none") +
+    scale_x_continuous(expand = c(0,0)) +
+    scale_y_continuous(expand = c(0,0))
+}
+
+#density map (grey) visualization function
+umap_densmap_grey <- function(d, bw){
+  da_um_t_ggdens_grey <<- ggplot(d, aes(x=V1, y=V2)) + 
+    stat_density_2d(aes(fill=after_stat(density)), contour = F, geom = "raster", 
+                    h = c(bw, bw), n = 500) + 
+    scale_fill_distiller(palette = "Greys") + 
+    theme_void() + 
+    theme(aspect.ratio = 1, legend.position = "none") +
+    scale_x_continuous(expand = c(0,0)) +
+    scale_y_continuous(expand = c(0,0))
+}
+
+#visualize density map
+se=20; ne=5; bw=2.8
+umap_densmap_color(d_um_t1_t, bw)
+umap_densmap_grey(d_um_t1_t, bw)
+ggsave(da_um_t_ggdens_grey, 
+       "data/Figure/Figure2/Figure2C.png", width=500, height=500, units="px")
+
+#fix image data
+cimg.limit.openmp()
+im_p <- load.image("data/Figure/Figure2/Figure2C.png")
+im_p <- rm.alpha(im_p)
+im_pg <- grayscale(im_p)
+save.image(im_pg, "data/Figure/Figure2/Figure2C_fix.png")
+```
+
+
+###Watershed segmentation (Figures 2B-2C)
+
+watershed segmentation in matlab
+matlab code
+
+A = imread("data/Figure/Figure2/Figure2C_fix.png");
+B = imcomplement(A);
+C = watershed(B);
+imwrite(C, "data/Figure/Figure2/Figure2C_fix_ws.png")
+
+
+```{r}
+#confirm result watershed segmentation
+im_p_ws <- load.image("data/Figure/Figure2/Figure2C_fix_ws.png")
+plot(as.raster(im_p_ws))
+im_p_ws2 <- im_p_ws
+im_p_ws2[im_p_ws2 > 0] = 1 #only boundary lines
+save.image(im_p_ws2, "data/Figure/Figure2/Figure2C_fix_ws2.png")
+im_p_ws3 <- image_read("data/Figure/Figure2/Figure2C_fix_ws2.png")
+im_p_ws3 <- image_transparent(im_p_ws3, 'white') #transparent processing
+image_write(im_p_ws3, "data/Figure/Figure2/Figure2C_fix_ws_tp.png")
+image_write(im_p_ws3, "data/Figure/Figure2/Figure2C.pdf")
+im_p_ws_d <- data.frame(im_p_ws[,,1,1]) #digitize watershed result
+
+#transform watershed result
+im_p_ws_d_cl <- im_p_ws_d %>% 
+  mutate(X = 1:500) %>% 
+  pivot_longer(cols = -X, names_to = "Yn", values_to = "Value") %>% 
+  mutate(Y = rep(500:1, 500)) %>% 
+  select(1,4,3)
+cluster <- im_p_ws_d_cl %>% group_by(Value) %>% group_indices() 
+im_p_ws_d_cl <- im_p_ws_d_cl %>% mutate(Cluster = cluster) %>% select(-Value)
+ggplot(im_p_ws_d_cl) + geom_tile(aes(x=X, y=Y, fill=Cluster)) + theme_classic() + theme(aspect.ratio = 1)
+
+#confirm illustration range
+xlim <- ggplot_build(da_um_t_ggdens)$layout$panel_params[[1]]$x.range
+ylim <- ggplot_build(da_um_t_ggdens)$layout$panel_params[[1]]$y.range
+xmin <- xlim[1]; xmax <- xlim[2]
+ymin <- ylim[1]; ymax <- ylim[2]
+
+#pixelate UMAP data
+d_um_t_500 <- d_um_t1_t %>% 
+  mutate(X500 = (V1 - xmin) * 500 / (xmax - xmin),
+         Y500 = (V2 - ymin) * 500 / (ymax - ymin)) %>% 
+  mutate(X = as.integer(ceiling(X500)), 
+         Y = as.integer(ceiling(Y500)))
+
+#add cluster column UMAP data referring to watershed result
+d_um_t_500_cl <- d_um_t_500 %>% left_join(im_p_ws_d_cl)
+ggplot(d_um_t_500_cl) + 
+  geom_point(aes(x=V1, y=V2, color=as.character(Cluster))) + 
+  theme_void() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+
+#modify boundary sample in UMAP data (change the same cluster as the nearest sample)
+x <- d_um_t_500_cl$X500; y <- d_um_t_500_cl$Y500
+Clus <- d_um_t_500_cl$Cluster
+for(i in 1:length(x)){
+  if(Clus[i] != 1){next}
+  if(Clus[i] == 1){
+    d_um_t_500_cl_dis <- d_um_t_500_cl %>% 
+      mutate(dis = (X-x[i])^2 + (Y-y[i])^2)
+    Clus[i] <- d_um_t_500_cl_dis %>% 
+      filter(Cluster != 1) %>% 
+      slice(which.min(dis)) %>% 
+      pull(Cluster)
+  }
+}
+d_um_t_500_cl <- d_um_t_500_cl %>% mutate(Cluster = Clus)
+#3->1, 2->2, 4->3, 8->4, 6->5, 5->6, 7->7
+
+#modify cluster name
+d_um_t_500_cl <- d_um_t_500_cl %>% 
+  mutate(Cluster = case_when(
+    Cluster == 3 ~ "1", Cluster == 2 ~ "2", Cluster == 4 ~ "3", Cluster == 8 ~ "4", 
+    Cluster == 6 ~ "5", Cluster == 5 ~ "6", Cluster == 7 ~ "7")) %>% 
+  mutate(Cluster = factor(Cluster, levels = c("1","2","3","4","5","6","7")))
+
+#visualize the clustering result
+colorlist <- c("#BE5378","#CE7754","#DFC44E","#54B345","#3B98B2","#5F7EB2","#808080")
+ggplot(d_um_t_500_cl) + 
+  geom_point(aes(x=V1, y=V2, color=Cluster), size=1) + 
+  scale_color_manual(values = colorlist) + 
+  theme_void() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+ggsave("data/Figure/Figure2/Figure2B.pdf", width = 5, height = 5, units = "in")
+```
+
+###Combine cluster and UMAP data into behavioral parameter data
+```{r}
+dta_rel_umap <- bind_cols(dta_rel2, d_um_t_500_cl %>% select(Cluster, V1, V2))
+dta_rel_umap$Cluster <- as.character(dta_rel_umap$Cluster)
+
+dta_rel_umap_layout <- dta_rel_umap %>% select(Colony, Day, ID, V1, V2)
+write.csv(dta_rel_umap_layout, "data/processed_data/umap_layout.csv", row.names = F)
+```
+
+
+##Relationships between clusters and behavioral parameters
+
+###Visualization for relationship between parameters and UMAP data (Figures 2D-2G, S3)
+```{r}
+umap_var_spectral <- function(d, varlist){
+  for(var in varlist){
+    x <- d %>% pull(var)
+    ggplot(d) + 
+      geom_point(aes(x=V1, y=V2, color=x), size=1) + 
+      scale_color_gradientn(colors = spectral) + 
+      theme_void() + 
+      theme(aspect.ratio = 1,
+            legend.position = "none")
+    ggsave(paste0("data/Figure/Figure2/FigureS3/", var, ".pdf"), width = 4, height = 4, units = "in")
+  }
+}
+
+d <- dta_rel_umap
+varlist <- c(
+  c("Sum_Sleep", "N_Sleep", "Mean_Sleep"),
+  c("Sum_Nest", "Sum_relA_Nest", "N_Nest", "N_relA_Nest", "Mean_Nest"),
+  c("Sum_Others", "Sum_relA_Others", "N_Others", "N_relA_Others", "Mean_Others"),
+  c("Sum_Toilet", "Sum_relA_Toilet", "N_Toilet", "N_relA_Toilet", "Mean_Toilet"),
+  c("Sum_Garbage", "Sum_relA_Garbage", "N_Garbage", "N_relA_Garbage", "Mean_Garbage")
+  )
+umap_var_spectral(d, varlist)
+```
+
+###Comparison of each parameter across clusters (Figures 2D-G)
+```{r}
+#data
+dta_rel_umap_para <- dta_rel_umap %>% mutate(Cluster = as.factor(Cluster))
+
+#model N (Rest)
+lm_para_N_Sleep <- lm(data = dta_rel_umap_para, formula = N_Sleep ~ Cluster)
+summary(lm_para_N_Sleep)
+#Multiple R-squared:  0.5425,	Adjusted R-squared:  0.5416
+Anova(lm_para_N_Sleep, test.statistic = "Chisq")
+##x2=1555.9, Df=6, p<0.001
+emm_res <- emmeans(lm_para_N_Sleep, pairwise ~ Cluster)
+pair_res <- pairs(emm_res, adjust = "holm") %>% as_tibble()
+write.csv(pair_res, row.names = F, "data/statistical_result/Figure2D.csv")
+
+#model Mean (Rest)
+lm_para_Mean_Sleep <- lm(data = dta_rel_umap_para, formula = Mean_Sleep ~ Cluster)
+summary(lm_para_Mean_Sleep)
+#Multiple R-squared:  0.4011,	Adjusted R-squared:  0.3999
+Anova(lm_para_Mean_Sleep, test.statistic = "Chisq")
+##x2=1157.8, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Mean_Sleep, pairwise ~ Cluster)
+pair_res <- pairs(emm_res, adjust = "holm") %>% as_tibble()
+write.csv(pair_res, row.names = F, "data/statistical_result/Figure2E.csv")
+
+#model Sum (Rest)
+lm_para_Sum_Sleep <- lm(data = dta_rel_umap_para, formula = Sum_Sleep ~ Cluster)
+summary(lm_para_Sum_Sleep)
+#Multiple R-squared:  0.4056,	Adjusted R-squared:  0.4045
+Anova(lm_para_Sum_Sleep, test.statistic = "Chisq")
+##x2=1173.7, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Sum_Sleep, pairwise ~ Cluster)
+pair_res <- pairs(emm_res, adjust = "holm") %>% as_tibble()
+write.csv(pair_res, row.names = F, "data/statistical_result/Figure2F.csv")
+
+#model N relative (Other)
+lm_para_N_relA_Others <- lm(data = dta_rel_umap_para, formula = N_relA_Others ~ Cluster)
+summary(lm_para_N_relA_Others)
+#Multiple R-squared:  0.4316,	Adjusted R-squared:  0.4305
+Anova(lm_para_N_relA_Others, test.statistic = "Chisq")
+##x2=1184.8, Df=6, p<0.001
+emm_res <- emmeans(lm_para_N_relA_Others, pairwise ~ Cluster)
+pair_res <- pairs(emm_res, adjust = "holm") %>% as_tibble()
+write.csv(pair_res, row.names = F, "data/statistical_result/Figure2G.csv")
+```
+
+###Visualization for relationship between parameters and clusters (Figure S3)
+```{r}
+#data
+dta_rel_umap_mean <- dta_rel_umap %>% 
+  select(-c(V1,V2)) %>% 
+  group_by(Cluster) %>% 
+  summarise(across(4:26, mean))
+varlevel <- c(
+  c("Sum_Sleep", "N_Sleep", "Mean_Sleep"), 
+  c("Sum_Nest", "N_Nest", "Mean_Nest", "Sum_relA_Nest", "N_relA_Nest"), 
+  c("Sum_Others", "N_Others", "Mean_Others", "Sum_relA_Others", "N_relA_Others"), 
+  c("Sum_Toilet", "N_Toilet", "Mean_Toilet", "Sum_relA_Toilet", "N_relA_Toilet"), 
+  c("Sum_Garbage", "N_Garbage", "Mean_Garbage", "Sum_relA_Garbage", "N_relA_Garbage")
+)
+dta_rel_umap_mean_l <- dta_rel_umap_mean %>% 
+  pivot_longer(cols = -1, names_to = "Variable", values_to = "Mean") %>% 
+  mutate(Variable = factor(Variable, levels = varlevel))
+
+dta_rel_umap_sd <- dta_rel_umap %>% 
+  select(-c(V1,V2)) %>% 
+  group_by(Cluster) %>% 
+  summarise(across(4:26, sd, .names = "{.col}"))
+dta_rel_umap_sd_l <- dta_rel_umap_sd %>% 
+  pivot_longer(cols = -1, names_to = "Variable", values_to = "SD") %>% 
+  mutate(Variable = factor(Variable, levels = varlevel))
+
+dta_rel_umap_clu_n <- dta_rel_umap %>% group_by(Cluster) %>% summarise(n = n())
+
+dta_rel_umap_meansd_l <- dta_rel_umap_mean_l %>% 
+  bind_cols(dta_rel_umap_sd_l %>% select(SD)) %>% 
+  left_join(dta_rel_umap_clu_n, by = join_by(Cluster)) %>% 
+  select(Cluster, n, Variable, Mean, SD)
+
+#plot
+d <- dta_rel_umap_meansd_l %>% filter(grepl(pattern = "Sleep", x = Variable))
+ggplot(d, aes(x = Variable, y = Mean, color = Cluster)) + 
+  geom_errorbar(aes(ymax = Mean + SD, ymin = Mean - SD), 
+                position = position_dodge(width=0.8), width = 0.5) + 
+  geom_point(position = position_dodge(width=0.8), size = 3) + 
+  scale_color_manual(values = colorlist) + 
+  scale_x_discrete(expand = c(0,0)) + 
+  theme_classic() + 
+  theme(aspect.ratio = 0.2)
+ggsave("data/Figure/Figure2/FigureS3/Rest.pdf", width = 7.5, height = 1.5, units = "in")
+
+varlist <- c("Others", "Nest", "Toilet", "Garbage")
+for(var in varlist){
+  d <- dta_rel_umap_meansd_l %>% filter(grepl(pattern = var, x = Variable))
+  ggplot(d, aes(x = Variable, y = Mean, color = Cluster)) + 
+    geom_errorbar(aes(ymax = Mean + SD, ymin = Mean - SD), 
+                  position = position_dodge(width=0.8), width = 0.5) + 
+    geom_point(position = position_dodge(width=0.8), size = 3) + 
+    scale_color_manual(values = colorlist) + 
+    scale_x_discrete(expand = c(0,0)) + 
+    theme_classic() + 
+    theme(aspect.ratio = 0.12)
+  ggsave(paste0("data/Figure/Figure2/FigureS3/", var, ".pdf"), width = 12.5, height = 1.5, units = "in")
+}
+```
+
+
+##Individual attribute effects
+
+###Data
+```{r}
+#attribute data
+ID_att <- read.csv("data/pre_info_data/individual_information.csv") %>% mutate(Birth = as.Date(Birth))
+id <- ID_att$ID
+
+#observation day
+obs_day <- read.csv("data/pre_info_data/observation_day.csv") %>% mutate(Obs_day = as.Date(Obs_day))
+
+#add attribute data
+dta_rel_umap_att <- dta_rel_umap %>% 
+  left_join(ID_att, by = join_by(Colony, ID)) %>% 
+  mutate(ID = factor(ID, levels = id)) %>% 
+  left_join(obs_day, by = join_by(Colony, Day)) %>% 
+  mutate(Birth = as.Date(Birth), 
+         Obs_day = as.Date(Obs_day),
+         Age_obs = as.integer(Obs_day - Birth),
+         log_Age = log(Age_obs),
+         Cluster = factor(Cluster), 
+         Colony = factor(Colony))
+```
+
+###Colony (Figure 2H)
+```{r}
+#data
+dta_rel_umap_att_col <- dta_rel_umap_att %>% 
+  group_by(Colony, Cluster) %>% summarise(n = n()) %>% 
+  mutate(sum = sum(n), p = n / sum)
+
+#plot
+colorlist <- c("#BE5378","#CE7754","#DFC44E","#54B345","#3B98B2","#5F7EB2","#808080")
+ggplot(dta_rel_umap_att_col, aes(x=Colony, y=p, fill=Cluster)) + 
+  geom_bar(stat = "identity", width = 0.75) +
+  scale_y_continuous(limits = c(0,1), expand = c(0,0)) +
+  scale_fill_manual(values = colorlist) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1.5, legend.position = "none")
+ggsave("data/Figure/Figure2/Figure2H.pdf", width = 4, height = 6, units = "in")
+```
+
+###Caste effect (Figure 2I)
+```{r}
+#model
+ml_caste <- multinom(data = dta_rel_umap_att, Cluster ~ Caste)
+glance(ml_caste)
+#edf deviance AIC nobs
+#12	10030.46	10054.46	3030
+Anova(ml_caste, test.statistic = "Chisq")
+##x2=1309.5, Df=6, p<0.001
+
+#data
+dta_rel_umap_att_caste <- dta_rel_umap_att %>% 
+  group_by(Caste, Cluster) %>% summarise(n = n()) %>% 
+  mutate(p = n/sum(n)) %>% ungroup()
+dta_rel_umap_att_caste <- dta_rel_umap_att_caste %>% 
+  add_row(Caste = "B", Cluster = "2", n = 0, p = 0)
+
+#plot
+ggplot(dta_rel_umap_att_caste, aes(x=Cluster, y=p, fill=Caste)) + 
+  geom_bar(position = position_dodge(), stat = "identity") +
+  theme_classic() + 
+  scale_y_continuous(expand = c(0,0)) +
+  scale_fill_manual(values = c("#8858AA","grey")) + 
+  theme(aspect.ratio = 0.5, legend.position = "none")
+ggsave("data/Figure/Figure2/Figure2I/bar.pdf", width = 5, height = 2.5, units = "in")
+
+ggplot(dta_rel_umap_att) + 
+  geom_point(aes(x=V1, y=V2, color=Caste), size=1) + 
+  scale_color_manual(values = c("#8858AA","grey")) + 
+  theme_void() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+ggsave("data/Figure/Figure2/Figure2I/umap.pdf", width = 4, height = 4, units = "in")
+```
+
+###Body weight effect (Figure 2J)
+```{r}
+#model
+ml_weight <- multinom(data = dta_rel_umap_att, Cluster ~ Weight)
+glance(ml_weight)
+#edf deviance AIC nobs
+#12	10815.44	10839.44	3030
+Anova(ml_weight, test.statistic = "Chisq")
+##x2=524.55, Df=6, p<0.001
+tidy_ml_weight <- tidy(ml_weight)
+write.csv(tidy_ml_weight, row.names = F, "data/statistical_result/Figure2J.csv")
+
+#plot
+ggplot(data = dta_rel_umap_att, aes(x = Cluster, color = Cluster, y = Weight)) + 
+  geom_violin(position = position_dodge(width = 0.8), width = 0.8) + 
+  geom_boxplot(position = position_dodge(0.8), width = 0.125, outlier.shape = NA) + 
+  scale_color_manual(values = colorlist) + 
+  theme_classic() + 
+  theme(aspect.ratio = 0.5, legend.position = "none")
+ggsave("data/Figure/Figure2/Figure2J/violin.pdf", width = 5, height = 2.5, units = "in")
+
+spectral <- c("#5E4FA2","#3288BD","#66C2A5","#ABDDA4","#E6F598","#FFFFBF",
+              "#FEE08B","#FDAE61","#F46D43","#D53E4F","#9E0142")
+ggplot(dta_rel_umap_att) + 
+  geom_point(aes(x=V1, y=V2, color=Weight), size=1) + 
+  scale_color_gradientn(colors = spectral) + 
+  theme_void() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+ggsave("data/Figure/Figure2/Figure2I/umap.pdf", width = 4, height = 4, units = "in")
+```
+
+###Age effect (Figure 2K)
+```{r}
+#model
+ml_age <- multinom(data = dta_rel_umap_att, Cluster ~ log_Age)
+glance(ml_age)
+#edf deviance AIC nobs
+#12	10249.37	10273.37	3030
+Anova(ml_age, test.statistic = "Chisq")
+##x2=1090.6, Df=6, p<0.001
+tidy_ml_age <- tidy(ml_age)
+write.csv(tidy_ml_age, row.names = F, "data/statistical_result/Figure2K.csv")
+
+#plot
+ggplot(data = dta_rel_umap_att, aes(x = Cluster, color = Cluster, y = log_Age)) + 
+  geom_violin(position = position_dodge(width = 0.8), width = 1) + 
+  geom_boxplot(position = position_dodge(0.8), width = 0.125, outlier.shape = NA) + 
+  scale_y_continuous(breaks = c(log(91), log(182), log(365), log(730), log(1460), log(2920)),
+                     labels = c(91, 182, 365, 730, 1460, 2920)) + 
+  scale_color_manual(values = colorlist) + 
+  theme_classic() + 
+  theme(aspect.ratio = 0.5, legend.position = "none")
+ggsave("data/Figure/Figure2/Figure2K/violin.pdf", width = 5, height = 2.5, units = "in")
+
+ggplot(dta_rel_umap_att) + 
+  geom_point(aes(x=V1, y=V2, color=log_Age), size=1) + 
+  scale_color_gradientn(colors = spectral) + 
+  theme_void() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+ggsave("data/Figure/Figure2/Figure2K/umap.pdf", width = 4, height = 4, units = "in")
+```
+
+###NB data
+```{r}
+#NB data
+dta_rel_umap_att_nb0 <- dta_rel_umap_att %>% 
+  filter(Caste == "N") %>% 
+  #relative weight, age
+  group_by(Colony) %>% 
+  mutate(zAge = scale(log_Age), zWeight = scale(Weight))
+
+#NB & Cluster1-6 data
+dta_rel_umap_att_nb_ex7 <- dta_rel_umap_att_nb0 %>% 
+  filter(Cluster != "7") %>% 
+  mutate(Cluster = factor(Cluster, levels = c("1","2","3","4","5","6")))
+
+#model plot function
+eff_pv <- function(eff){
+  ggplot(eff) +
+    geom_line(aes(x = x, y = predicted, color = response.level)) + 
+    scale_color_manual(values = colorlist) + 
+    scale_x_continuous(expand = c(0,0)) + 
+    scale_y_continuous(expand = c(0,0), limits = c(0,NA)) + 
+    theme_classic() + 
+    theme(aspect.ratio = 0.5, legend.position = "none")
+}
+```
+
+####Relative body weight effect (Figure 2L)
+```{r}
+#model
+ml_nb_zwei2 <- multinom(
+  data = dta_rel_umap_att_nb_ex7, Cluster ~ poly(zWeight,2)
+)
+glance(ml_nb_zwei2)
+#edf deviance AIC nobs
+#15	8858.11	8888.11	2686	
+Anova(ml_nb_zwei2, test.statistic = "Chisq")
+##x2=394.22, Df=10, p<0.001
+tidy_ml_nb_zwei2 <- tidy(ml_nb_zwei2)
+write.csv(tidy_ml_nb_zwei2, row.names = F, "data/statistical_result/Figure2L.csv")
+
+#plot
+eff <- ggeffect(ml_nb_zwei2, terms = "zWeight[all]")
+eff_pv(eff)
+ggsave("data/Figure/Figure2/Figure2L.pdf", width = 4, height = 2, units = "in")
+```
+
+####Relative age (Figure 2M)
+```{r}
+#model
+ml_nb_zage2 <- multinom(
+  data = dta_rel_umap_att_nb_ex7, Cluster ~ poly(zAge,2)
+)
+glance(ml_nb_zage2)
+#edf deviance AIC nobs
+#15	8978.555	9008.555	26866	
+Anova(ml_nb_zage2, test.statistic = "Chisq")
+##x2=273.78, Df=10, p<0.001
+tidy_ml_nb_zage2 <- tidy(ml_nb_zage2)
+write.csv(tidy_ml_nb_zage2, row.names = F, "data/statistical_result/Figure2M.csv")
+
+#plot
+eff <- ggeffect(ml_nb_zage2, terms = "zAge[all]")
+eff_pv(eff)
+ggsave("data/Figure/Figure2/Figure2M.pdf", width = 4, height = 2, units = "in")
+```
+
+####Sex (Figure S2B)
+```{r}
+#model
+ml_nbsex <- multinom(data = dta_rel_umap_att_nb_ex7, Cluster ~ Sex)
+glance(ml_nbsex)
+#edf deviance AIC nobs
+#10	9221.68	9241.68	2686
+Anova(ml_nbsex, test.statistic = "Chisq")
+##x2=30.653, Df=5, p<0.001
+
+#data
+dta_rel_umap_att_castesex <- dta_rel_umap_att %>% 
+  group_by(Sex, Cluster) %>% summarise(n = n()) %>% ungroup() %>% 
+  pivot_wider(names_from = Cluster, values_from = n) %>% 
+  pivot_longer(cols = -1, names_to = "Cluster", values_to = "n") %>% 
+  replace_na(list(n = 0)) %>% arrange(Sex, Cluster) %>% 
+  group_by(Sex) %>% mutate(p = n / sum(n)) %>% ungroup()
+
+#plot
+ggplot(dta_rel_umap_att_castesex, aes(x=Cluster, y=p, fill=Sex)) + 
+  geom_bar(position = position_dodge(), stat = "identity") +
+  theme_classic() + 
+  scale_y_continuous(expand = c(0,0)) +
+  scale_fill_manual(values = c("#D04255","#6CBAD8","#EDA184","#1DAF9E")) + 
+  theme(aspect.ratio = 0.5, legend.position = "none")
+ggsave("data/Figure/Figure2/FigureS2B/bar.pdf", width = 5, height = 2.5, units = "in")
+
+ggplot(dta_rel_umap_att) + 
+  geom_point(aes(x=V1, y=V2, color=Sex), size=1) + 
+  scale_color_manual(values = c("#D04255","#6CBAD8","#EDA184","#1DAF9E")) + 
+  theme_void() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+ggsave("data/Figure/Figure2/FigureS2B/umap.pdf", width = 4, height = 4, units = "in")
+```
+
+####Sex * relative body weight (Figure S2C)
+```{r}
+#model
+ml_nb_sex_zwei2 <- multinom(
+  data = dta_rel_umap_att_nb_ex7, Cluster ~ Sex * poly(zWeight,2)
+)
+glance(ml_nb_sex_zwei2)
+#edf deviance AIC nobs
+#30	8738.96	8798.96	2686	
+Anova(ml_nb_sex_zwei2, test.statistic = "Chisq")
+##x2=102.87, Df=10, p<0.001
+#LR Chisq Df Pr(>Chisq) 
+#Sex                     16.28  5   0.006081 ** 
+#poly(zWeight, 2)       379.85 10  < 2.2e-16 ***
+#Sex:poly(zWeight, 2)   102.87 10  < 2.2e-16 ***
+tidy_ml_nb_sex_zwei2 <- tidy(ml_nb_sex_zwei2)
+write.csv(tidy_ml_nb_sex_zwei2, row.names = F, "data/statistical_result/FigureS2C.csv")
+
+#plot
+ml_nbf_zwei2 <- multinom(
+  data = dta_rel_umap_att_nb_ex7 %>% filter(Sex == "F"), Cluster ~ poly(zWeight,2)
+)
+eff <- ggeffect(ml_nbf_zwei2, terms = "zWeight[all]")
+eff_pv(eff)
+ggsave("data/Figure/Figure2/FigureS2C/NF.pdf", width = 4, height = 3, units = "in")
+
+ml_nbm_zwei2 <- multinom(
+  data = dta_rel_umap_att_nb_ex7 %>% filter(Sex == "M"), Cluster ~ poly(zWeight,2)
+)
+eff <- ggeffect(ml_nbm_zwei2, terms = "zWeight[all]")
+eff_pv(eff)
+ggsave("data/Figure/Figure2/FigureS2C/NM.pdf", width = 4, height = 3, units = "in")
+```
+
+####Sex * relative age (Figure S2D)
+```{r}
+#model
+ml_nb_sex_zage2 <- multinom(
+  data = dta_rel_umap_att_nb_ex7, Cluster ~ Sex * poly(zAge,2)
+)
+glance(ml_nb_sex_zage2)
+#edf deviance AIC nobs
+#30	8800.866	8860.866	2686	
+Anova(ml_nb_sex_zage2, test.statistic = "Chisq")
+##x2=155.42, Df=10, p<0.001
+#LR Chisq Df Pr(>Chisq)
+#Sex                 22.273  5  0.0004646 ***
+#poly(zAge, 2)      265.397 10  < 2.2e-16 ***
+#Sex:poly(zAge, 2)  155.416 10  < 2.2e-16 ***
+tidy_ml_nb_sex_zage2 <- tidy(ml_nb_sex_zage2)
+write.csv(tidy_ml_nb_sex_zage2, row.names = F, "data/statistical_result/FigureS2D.csv")
+
+#plot
+ml_nbf_zage2 <- multinom(
+  data = dta_rel_umap_att_nb_ex7 %>% filter(Sex == "F"), Cluster ~ poly(zAge,2)
+)
+eff <- ggeffect(ml_nbf_zage2, terms = "zAge[all]")
+eff_pv(eff)
+ggsave("data/Figure/Figure2/FigureS2D/NF.pdf", width = 4, height = 3, units = "in")
+
+#zAge2 Mのみ
+ml_nbm_zage2 <- multinom(
+  data = dta_rel_umap_att_nb_ex7 %>% filter(Sex == "M"), Cluster ~ poly(zAge,2)
+)
+eff <- ggeffect(ml_nbm_zage2, terms = "zAge[all]")
+eff_pv(eff)
+ggsave("data/Figure/Figure2/FigureS2D/NM.pdf", width = 4, height = 3, units = "in")
+```
+
+
+#Figure 3
+
+##Cluster assingnment (Figures 3A & 3B)
+```{r}
+#each individual & each day
+day <- dayname %>% unlist()
+dta_rel_umap_day <- dta_rel_umap %>% 
+  mutate(Day = factor(Day, levels = day)) %>% 
+  arrange(Colony, Day) %>% 
+  group_by(Colony, ID) %>% 
+  mutate(Day = factor(as.character(1:30), levels = rev(as.character(1:30))))
+
+sizelist <- c(22, 17, 19, 21, 22)
+colorlist <- c("#BE5378","#CE7754","#DFC44E","#54B345","#3B98B2","#5F7EB2","#808080")
+
+for(i in 1:5){
+  colony <- colonyname[i]; size <- sizelist[i]
+  ggplot(dta_rel_umap_day %>% filter(Colony == colony)) + 
+    geom_tile(aes(x=ID, y=Day, fill=Cluster)) +
+    scale_fill_manual(values = colorlist) +
+    scale_y_discrete(expand = c(0,0)) +
+    scale_x_discrete(expand = c(0,0)) +
+    theme_classic() + 
+    theme(aspect.ratio = 22/size, legend.position = "none")
+  ggsave(paste0("data/Figure/Figure3/Figure3A/", colony, ".pdf"), 
+         width = size*0.3, height = 6.6, units = "in")
+}
+
+#each individual & across 30 days
+cluster <- c("1","2","3","4","5","6","7")
+dta_rel_umap_id <- dta_rel_umap %>% 
+  group_by(Colony, ID, Cluster) %>% 
+  summarise(n = n()) %>% 
+  pivot_wider(names_from = Cluster, values_from = n) %>% 
+  pivot_longer(cols = c(-1,-2), names_to = "Cluster", values_to = "n") %>% 
+  replace_na(list(n = 0)) %>% 
+  mutate(ID = factor(ID, levels = idvect),
+         Cluster = factor(Cluster, levels = cluster)) %>% 
+  arrange(Colony, ID, Cluster)
+
+for(i in 1:5){
+  colony <- colonyname[i]; size <- sizelist[i]
+  for(j in 1:7){
+    clu <- cluster[j]; col <- colorlist[j]
+    d <- dta_rel_umap_id %>% filter(Colony == colony, Cluster == clu)
+    ggplot(d) + 
+      geom_tile(aes(x=ID, y=Cluster, fill=n)) +
+      theme_void() + 
+      scale_fill_gradient(limits = c(0, 30), low = "white", high = col) +
+      scale_y_discrete(expand = c(0,0)) +
+      scale_x_discrete(expand = c(0,0)) +
+      theme(aspect.ratio = 1.54/size, legend.position = "none")
+    ggsave(paste0("data/Figure/Figure3/Figure3B/", colony, "_", clu, ".pdf"), 
+           width = size*0.3, height = 0.55, units = "in")
+  }
+}
+```
+
+##Representative cluster for each individual (for Figures 4-6)
+```{r}
+dta_rel_umap_clu <- dta_rel_umap %>% 
+  group_by(Cluster) %>% summarise(n = n()) %>% mutate(p = n / sum(n)) %>% select(-n)
+
+dta_rel_umap_id_max <- dta_rel_umap_id %>% 
+  mutate(Cluster = as.integer(Cluster)) %>% 
+  left_join(dta_rel_umap_clu, join_by(Cluster)) %>% 
+  group_by(Colony, ID) %>% 
+  filter(n >= max(n), p <= min(p)) %>% 
+  mutate(p = n/30) %>% ungroup() %>% 
+  mutate(Cluster = as.character(Cluster))
+
+write.csv(dta_rel_umap_id_max, row.names = F, 
+          "data/processed_data/representative_cluster.csv")
+```
+
+
+##Consistency index (Figure 3C)
+```{r}
+#cluster assignment across all individuals
+dta_rel_umap_id_cluster_mean_all <- dta_rel_umap_id %>% 
+  ungroup() %>% group_by(Cluster) %>% summarise(p = sum(n) / (n() * 30))
+
+#consistency index for observed data
+dta_rel_umap_id_cons <- dta_rel_umap_id %>% 
+  left_join(dta_rel_umap_id_cluster_mean_all) %>% 
+  mutate(logp = if_else(n == 0, 1e-10, log(n/30)),
+         ent = n/30 * logp) %>% 
+  summarise(Consistency = 1 + sum(ent) / log(7))
+
+#consistency index for randomized data
+
+##overall assignment rate for each cluster across individuals
+clu <- dta_rel_umap_id_cluster_mean_all %>% mutate(cp = cumsum(p)) %>% pull(cp)
+
+##randomized data (10000 sets)
+set.seed(10)
+ran <- runif(300000, min=0, max=1)
+randata <- tibble(ran) %>% 
+  mutate(No = rep(1:10000, each = 30)) %>% 
+  mutate(Cluster = case_when(
+    ran <= clu[1] ~ "1",
+    ran > clu[1] & ran <= clu[2] ~ "2",
+    ran > clu[2] & ran <= clu[3] ~ "3", 
+    ran > clu[3] & ran <= clu[4] ~ "4", 
+    ran > clu[4] & ran <= clu[5] ~ "5", 
+    ran > clu[5] & ran <= clu[6] ~ "6", 
+    ran > clu[6] ~ "7"))
+randata_cons <- randata %>% 
+  group_by(No, Cluster) %>% 
+  summarise(n = n()) %>% 
+  left_join(dta_rel_umap_id_cluster_mean_all) %>% 
+  mutate(logp = if_else(n == 0, 1e-10, log(n/30)), 
+         ent = n/30 * logp) %>% 
+  summarise(Consistency = 1 + sum(ent) / log(7))
+  mutate(Cons_rank = 10001 - row_number(Consistency)) %>% 
+  arrange(Cons_rank)
+
+#calculate p-value (right)
+dta_rel_umap_id_cons$p_value <- sapply(dta_rel_umap_id_cons$Consistency, function(x) {
+  mean(randata_cons$Consistency >= x)
+})
+dta_rel_umap_id_cons <- dta_rel_umap_id_cons %>% 
+  mutate(Sig = case_when(
+    p_value < 0.001 ~ "***", p_value >= 0.001 & p_value < 0.01 ~ "**",
+    p_value >= 0.01 & p_value < 0.05 ~ "*", p_value >= 0.05 ~ "NS"
+    ))
+dta_rel_umap_id_cons
+write.csv(dta_rel_umap_id_cons, row.names = F, "data/statistical_result/Figure3C.csv")
+
+#plot
+val95 <- randata_cons %>% filter(Cons_rank == 500) %>% pull(Consistency)
+for(colony in colonyname){
+  d <- dta_rel_umap_id_cons %>% filter(Colony == colony)
+  size <- d %>% nrow()
+  ggplot() + 
+    geom_bar(data=d, aes(x = ID, y = Consistency^0.5), stat = "identity") +
+    geom_hline(yintercept = val95^0.5, linetype = "dashed") + 
+    theme_classic() + 
+    scale_y_continuous(limits = c(0,1), expand = c(0,0)) +
+    theme(aspect.ratio = 5.5/size, axis.title = element_blank(), axis.text = element_blank())
+  ggsave(paste0("data/Figure/Figure3/Figure3C/", colony, ".pdf"), 
+         width = size*0.2, height = 1.25, units = "in")
+}
+```
+
+
+##Cosine similarity (Figure 3D)
+```{r}
+#cosine similarity function
+cossim <- function(a,b){sum(a*b) / (sqrt(sum(a)) * sqrt(sum(b)))}
+dta_rel_umap
+#calculate cosine similarity in observed data
+d_cossim <- dta_rel_umap %>% 
+  mutate(n = 1) %>% 
+  pivot_wider(names_from = Cluster, values_from = n) %>% 
+  select(Colony, ID, Day, "1","2","3","4","5","6","7") %>% 
+  pivot_longer(cols = 4:10, names_to = "Cluster", values_to = "n") %>% 
+  replace_na(list(n = 0)) %>% 
+  group_by(Colony, Cluster, Day) %>% 
+  nest() %>% 
+  arrange(Colony, Cluster, Day) %>% 
+  ungroup() %>% group_by(Colony, Cluster) %>% 
+  mutate(data_lead = lead(data)) %>% 
+  unnest() %>% 
+  select(-ID1) %>% ungroup() %>% 
+  group_by(Colony, Cluster, Day) %>% nest() %>% 
+  mutate(cos_sim = map_dbl(data, ~ cossim(.$n, .$n1))) %>% 
+  ungroup() %>% 
+  select(Colony, Cluster, cos_sim) %>% 
+  mutate(across(cos_sim, ~ replace(., is.nan(.), 0))) %>% 
+  drop_na(everything())
+
+#permuted data
+##randomly permute individual clusters per colony & day
+##permuted vectors (30 days * 100 sets * 5 colonies)
+##calculate cosine similarities (29 * 100 sets * 5 colonies * 7 clusters)
+for(colony in colonyname){
+  d <- dta_rel_umap %>% filter(Colony == colony)
+  Cluster <- d %>% pull(Cluster)
+  N <- length(Cluster)
+  
+  set.seed(20)
+  for(i in 1:100){
+    perm <- shuffle(N)
+    Cluster_perm <- Cluster[perm]
+    d_perm <- d %>% mutate(Cluster = Cluster_perm)
+    
+    d_perm_res <- d_perm %>% 
+      mutate(n = 1) %>% 
+      pivot_wider(names_from = Cluster, values_from = n) %>% 
+      pivot_longer(cols = 4:10, names_to = "Cluster", values_to = "n") %>% 
+      replace_na(list(n = 0)) %>% 
+      group_by(Colony, Cluster, Day) %>% 
+      nest() %>% 
+      arrange(Colony, Cluster, Day) %>% 
+      ungroup() %>% group_by(Colony, Cluster) %>% 
+      mutate(data_lead = lead(data)) %>% 
+      unnest() %>% 
+      select(-ID1) %>% ungroup() %>% 
+      group_by(Colony, Cluster, Day) %>% nest() %>% 
+      mutate(cos_sim = map_dbl(data, ~ cossim(.$n, .$n1))) %>% 
+      mutate(across(cos_sim, ~ replace(., is.nan(.), 0))) %>% 
+      ungroup %>% select(Colony, Cluster, cos_sim)
+    
+    d_perm0 <- d_perm0 %>% bind_rows(d_perm_res)
+  }
+}
+d_perm <- d_perm0 %>% slice(-1) %>% arrange(Colony, Cluster) %>% drop_na(everything())
+
+#summarize permuted data
+d_cossim_perm_m <- d_perm %>% 
+  ungroup() %>% group_by(Colony, Cluster) %>% 
+  summarise(med_perm = median(cos_sim), mean_perm = mean(cos_sim), 
+            sd_perm = sd(cos_sim), se_perm = sd(cos_sim)/sqrt(n()))
+
+#integrate observed data and permuted data
+d_perm <- d_perm %>% mutate(actperm = "Perm")
+d_cossim_actperm <- d_cossim %>% mutate(actperm = "Act") %>% bind_rows(d_perm)
+d_cossim_actperm_m <- d_cossim_m %>% 
+  left_join(d_cossim_perm_m, by = join_by(Colony, Cluster))
+
+#plot
+ggplot(d_cossim_actperm_m) + 
+  geom_errorbar(aes(x=Cluster, y=mean, group=Colony, ymax = mean + se, ymin = mean - se*0.2), 
+                position = position_dodge(width=0.75), width = 0.4) +
+  geom_bar(aes(x=Cluster, y=mean, fill=Colony), 
+           position = position_dodge(width=0.75), stat = "identity", width = 0.75) + 
+  geom_point(aes(x=Cluster, y=mean_perm, color=Colony), 
+             position = position_dodge(width=0.75)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  scale_fill_grey() + 
+  scale_color_manual(values = rep("white",5)) + 
+  theme_classic() + 
+  theme(aspect.ratio = 0.32, legend.position = "none", 
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure3/Figure3D.pdf", width = 6, height = 2, units = "in")
+
+#test
+colony <- "0"; cluster <- "0";
+p_value <- 0
+d0 <- tibble(colony, cluster, p_value)
+for(colony in colonyname){
+  for(cluster in clustername){
+    actual_vector <- d_cossim %>% filter(Colony == colony, Cluster == cluster) %>% pull(cos_sim)
+    perm_vector <- d_perm %>% filter(Colony == colony, Cluster == cluster) %>% pull(cos_sim)
+    wt <- wilcox.test(actual_vector, perm_vector)
+    f_value <- wt$statistic
+    p_value <- wt$p.value
+    d <- tibble(colony, cluster, f_value, p_value)
+    d0 <- d0 %>% bind_rows(d)
+  }
+}
+d_cossim_wtest <- d0 %>% slice(-1) %>% 
+  mutate(sig = case_when(
+    p_value >= 0.05 ~ "NS", p_value < 0.05 & p_value >= 0.01 ~ "*", 
+    p_value < 0.01 & p_value >= 0.001 ~ "**", p_value < 0.001 ~ "***" 
+  )) %>% 
+  arrange(cluster)
+write.csv(d_cossim_wtest, row.names = F, "data/statistical_result/Figure3D.csv")
+```
+
+
+##Co-assignment index (Figure 3E)
+```{r}
+#data
+dta_rel_umap_id_1 <- dta_rel_umap_id %>% mutate(p = n/30) %>% select(Colony, ID, Cluster1 = Cluster, p1 = p)
+dta_rel_umap_id_2 <- dta_rel_umap_id %>% mutate(p = n/30) %>% select(Colony, ID, Cluster2 = Cluster, p2 = p)
+
+dta_rel_umap_id_cluster_mean_all_1 <- dta_rel_umap_id_cluster_mean_all %>% select(Cluster1 = Cluster, f1 = p)
+dta_rel_umap_id_cluster_mean_all_2 <- dta_rel_umap_id_cluster_mean_all %>% select(Cluster2 = Cluster, f2 = p)
+
+dta_rel_umap_id_12 <- dta_rel_umap_id_1 %>% 
+  ##empirical co-assignment strength
+  left_join(dta_rel_umap_id_2, by = join_by(Colony, ID)) %>% 
+  mutate(cooc_obs = if_else(Cluster1 == Cluster2, p1*p2, p1*p2*2)) %>% 
+  ##reference co-assignment strength
+  left_join(dta_rel_umap_id_cluster_mean_all_1, by = join_by(Cluster1)) %>% 
+  left_join(dta_rel_umap_id_cluster_mean_all_2, by = join_by(Cluster2)) %>% 
+  mutate(cooc_exp = if_else(Cluster1 == Cluster2, f1*f2, f1*f2*2)) %>% 
+  ##odds ratio
+  mutate(cooc_ind = cooc_obs / cooc_exp) %>% 
+  unite(Comb, Cluster1, Cluster2, remove = F, sep = "_")
+
+#summarized data
+dta_rel_umap_id_12_s <- dta_rel_umap_id_12 %>% 
+  group_by(Cluster1, Cluster2, Comb) %>% 
+  summarise(mean_cooc_ind = mean(cooc_ind), sd_cooc_ind = sd(cooc_ind))
+
+#plot
+ggplot(dta_rel_umap_id_12_s, aes(x = Cluster1, y = sqrt(mean_cooc_ind), fill = Cluster2)) + 
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  scale_fill_manual(values = colorlist) + 
+  theme_classic() + 
+  theme(aspect.ratio = 0.25, legend.position = "none")
+ggsave("data/Figure/Figure3/Figure3E.pdf", width = 10, height = 2.5, units = "in")
+```
+
+

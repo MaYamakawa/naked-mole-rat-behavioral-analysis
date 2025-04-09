@@ -1,0 +1,872 @@
+---
+title: "Figure 6"
+output: html_notebook
+---
+
+#1 Permutation function
+
+##Move event data function
+```{r}
+move_event_data <- function(k){
+  
+  colony <- colonyname[k]
+  dayvec <- dayname[[k]]
+  id <- idlist[[k]]
+  size <- length(id)
+  
+  #ID, Time, From_To data for 30-day
+  ID <- "0"; Time <- 0; From_To <- "0"
+  d_f <- tibble(ID, Time, From_To)
+  
+  for(i in 1:30){
+    name <- dayvec[i]
+    
+    d_f0 <- fread(paste0("data/processed_data/beh_event_data/", colony, "/", name, ".csv")) %>% 
+      #remove disturbance phase
+      filter(Disturb == 0) %>% 
+      #extract move events of clear from_to
+      group_by(ID) %>% 
+      mutate(Loc_lag = lag(Loc, n=1)) %>% 
+      drop_na(Loc_lag) %>% filter(Loc != "", Loc_lag != "") %>% 
+      ungroup() %>% 
+      select(ID, Time, From = Loc_lag, To = Loc) %>% 
+      unite("From_To", c(From, To), sep = "_", remove = F) %>% 
+      #transform time column
+      mutate(Day = i,
+             Time = Time + 86400 * (i-1),
+             ID = factor(ID, levels = id)) %>% 
+      select(ID, Time, From_To) %>% 
+      arrange(Time, ID)
+    
+    d_f <- d_f %>% bind_rows(d_f0)
+  }
+  d_f %>% slice(-1) %>% mutate(ID = factor(ID, levels = id))
+}
+```
+
+##Permutation for follow behavior function
+```{r}
+follow_pttest_t <- function(d, colony, nperm){
+  
+  id <- idlist[colony] %>% unlist()
+  size <- length(id)
+  
+  #set random number
+  set.seed(10)
+  
+  #result list
+  DF_i <- list(); DF_j <- list()
+  DF_ijs <- list(); DF_jis <- list()
+  
+  #dyad data
+  id_pairs <- expand.grid(i = 1:(size - 1), j = (2:size)) %>% filter(i < j)
+  
+  #parallel setting
+  cl <- makeCluster(detectCores() - 1)
+  clusterExport(cl, list("d_f", "d", "id", "size", "mutate", "lag", "inner_join", "%>%", "runif", "set.seed"))
+  clusterEvalQ(cl, {library(dplyr)})
+
+  #parallel per dyad
+  results <- parLapply(cl, 1:nrow(id_pairs), function(idx) { 
+    i <- id_pairs$i[idx]
+    j <- id_pairs$j[idx]
+    
+    res_i <- list(); res_j <- list()
+    res_ij <- list(); res_ji <- list()
+    
+    #id i&j data
+    d_ij <- d %>% filter(ID == id[i] | ID == id[j]) %>% arrange(Time)
+    d_i <- d_ij %>% filter(ID == id[i])
+    d_i_time <- d_i %>% pull(Time)
+    d_i_fromto <- d_i %>% pull(From_To)
+    d_j <- d_ij %>% filter(ID == id[j])
+    
+    #time window for 3-sec interval & index including one or two ID
+    d_ij_ind <- d_ij %>% 
+      mutate(Time_lag = lag(Time, n=1),
+             dif_Time = Time - Time_lag,
+             dif = if_else(dif_Time > 3, 1, 0),
+             dif = if_else(row_number() == 1, 1, dif),
+             Index = as.integer(cumsum(dif))) %>% 
+      group_by(Index) %>% 
+      mutate(n_dist = n_distinct(ID)) %>% 
+      ungroup()
+    Index <- d_ij_ind %>% pull(Index)
+    n_dist <- d_ij_ind %>% pull(n_dist)
+    
+    #shuffle indices
+    shuffle_indices <- sample(1:(length(d_i_fromto)-1), nperm-1)
+    d_i_fromto_list <- list(0)
+    
+    # npermの繰り返し
+    Df_i <- numeric(nperm); Df_j <- numeric(nperm)
+    Df_ij <- numeric(nperm); Df_ji <- numeric(nperm)
+    
+    for(k in 1:nperm){
+      if(k == 1){
+        d_ij_t <- d_ij
+      } else {
+        d_i_fromto_list[[k-1]] <- d_i_fromto[(seq_along(d_i_fromto) + shuffle_indices[k-1]) %% length(d_i_fromto) + 1]
+        d_i_t <- tibble(ID = id[i], Time = d_i_time, From_To = d_i_fromto_list[[k-1]])
+        d_ij_t <- bind_rows(d_i_t, d_j) %>% arrange(Time)
+      }
+      
+      #remove time window with only one individual 
+      d_ij_ind <- d_ij_t %>% 
+        mutate(Index = Index, n_dist = n_dist) %>% 
+        filter(n_dist > 1) %>% select(-n_dist)
+      
+      suppressWarnings({  #ignore warning about numerous numbers
+        d_ij_ind_sm <- d_ij_ind %>% 
+          #extract dyad with same Index & same From_To
+          group_by(Index) %>% 
+          inner_join(d_ij_ind, by = c("Index", "From_To"), suffix = c("_1", "_2")) %>% 
+          filter(ID_1 != ID_2, ID_1 == id[i]) %>% 
+          #identify directional follow times
+          mutate(dif_Time = Time_1 - Time_2) %>% 
+          filter(dif_Time >= -3, dif_Time <= 3, dif_Time != 0) %>% 
+          mutate(n_ij = if_else(dif_Time < 0, 1, 0),
+                 n_ji = if_else(dif_Time > 0, 1, 0))
+        
+        #save sum of result
+        Df_i[k] <- id[i]; Df_j[k] <- id[j]
+        Df_ij[k] <- sum(d_ij_ind_sm$n_ij)
+        Df_ji[k] <- sum(d_ij_ind_sm$n_ji)
+      })
+      
+      res_i <- list(Df_i); res_j <- list(Df_j)
+      res_ij <- list(Df_ij)
+      res_ji <- list(Df_ji)
+    }
+    
+    return(list(res_i, res_j, res_ij, res_ji))
+  })
+  
+  #result
+  DF_i <<- unlist(lapply(results, `[[`, 1))
+  DF_j <<- unlist(lapply(results, `[[`, 2))
+  DF_ijs <<- unlist(lapply(results, `[[`, 3))
+  DF_jis <<- unlist(lapply(results, `[[`, 4))
+  
+  #end parallel action
+  stopCluster(cl)
+  #close connection
+  closeAllConnections()
+}
+```
+
+##Run function
+```{r}
+nperm <- 1000
+
+for(l in 1:5){
+  d_f <- move_event_data(l)
+  system.time(follow_pttest_t(d_f, 1, nperm))
+  
+  size <- idlist[l] %>% unlist() %>% length()
+  DFt <- tibble(DF_i, DF_j, DF_ijs, DF_jis)
+  nth <- paste0("DFt_", l)
+  assign(nth, DFt)
+}
+#output data: DFt_1~5
+```
+
+##Integrate data
+```{r}
+trans_tidy_follow <- function(d, i){
+  colony <- colonyname[i]
+  id <- idlist[i] %>% unlist()
+  d %>% 
+    select(ID_i = DF_i, ID_j = DF_j, Nij = DF_ijs, Nji = DF_jis) %>% 
+    mutate(ID_i = factor(ID_i, levels = id),
+           ID_j = factor(ID_j, levels = id)) %>% 
+    arrange(ID_i, ID_j) %>% 
+    group_by(ID_i, ID_j) %>% 
+    mutate(Index = 1:1000) %>% 
+    ungroup() %>% 
+    pivot_longer(cols = c(-ID_i, -ID_j, -Index), names_to = "Direction", values_to = "N") %>% 
+    mutate(ID_1 = ID_i, ID_2 = ID_j) %>% 
+    mutate(ID_i = if_else(Direction == "Nji", ID_2, ID_i),
+           ID_j = if_else(Direction == "Nji", ID_1, ID_j)) %>% 
+    unite("Perm", c(ID_i, ID_j), sep = "_", remove = F) %>% 
+    arrange(ID_i, ID_j, Index) %>% 
+    mutate(Colony = colony) %>% 
+    select(Colony, Perm, ID_i, ID_j, Index, N)
+}
+
+DFt_1_l <- trans_tidy_follow(DFt_1, 1)
+DFt_2_l <- trans_tidy_follow(DFt_2, 2)
+DFt_3_l <- trans_tidy_follow(DFt_3, 3)
+DFt_4_l <- trans_tidy_follow(DFt_4, 4)
+DFt_5_l <- trans_tidy_follow(DFt_5, 5)
+DFt_t_l <- bind_rows(DFt_1_l, DFt_2_l, DFt_3_l, DFt_4_l, DFt_5_l)
+```
+
+##Dyad information
+```{r}
+ID_att <- read.csv("data/pre_info_data/individual_information.csv") %>% mutate(Birth = as.Date(Birth))
+
+ID_att_1 <- ID_att %>% select(Colony, ID1 = ID, Caste1 = Caste, Sex1 = Sex, AgeD1 = AgeD, Weight1 = Weight)
+ID_att_2 <- ID_att %>% select(Colony, ID2 = ID, Caste2 = Caste, Sex2 = Sex, AgeD2 = AgeD, Weight2 = Weight)
+```
+
+#2 Visualization of p-value & follow index
+
+##p-value data
+```{r}
+#p-value summarize function
+pv_data_fol <- function(d, i){
+  colony <- colonyname[i]
+  d_i <- d %>% filter(Colony == colony)
+  perm <- d_i %>% distinct(Perm, .keep_all = F) %>% pull(Perm)
+  d_i %>% 
+    group_by(ID_i, ID_j, Perm) %>% 
+    summarise(Value = N[Index == 1],
+              Med = median(N),
+              Pn = sum(N >= N[Index == 1]) / 1000) %>% 
+    mutate(Sign = if_else(Pn < 0.5, "Plus", "Minus")) %>% 
+    mutate(P = if_else(Sign == "Plus", Pn * 2, (1 - Pn)*2 + 0.002)) %>% 
+    mutate(logP = -log10(P),
+           P_score = if_else(Sign == "Plus", logP, -logP)) %>% 
+    mutate(Colony = colony) %>% 
+    mutate(Perm = factor(Perm, levels = perm)) %>% 
+    select(Colony, Perm, ID_i, ID_j, 
+           Value, Med, Pn, Sign, P, logP, P_score) %>% 
+    arrange(Perm)
+}
+
+#run
+Colony <- "0"; Perm <- "0"; ID_i <- "0"; ID_j <- "0"
+Value <- 0; Med <- 0; Pn <- 0; Sign <- "0"; P <- 0; logP <- 0; P_score <- 0
+pv0 <- tibble(Colony, Perm, ID_i, ID_j, Value, Med, Pn, Sign, P, logP, P_score)
+for(i in 1:5){
+  pv <- pv_data_fol(DFt_t_l, i)
+  pv0 <- pv0 %>% bind_rows(pv)
+}
+pv_folt <- pv0 %>% slice(-1)
+pv_folt
+```
+
+##Follow index data
+```{r}
+#example of frequency distribution in simulated value (Figure 6B)
+DFt_t_l_LOC1_OC1 <- DFt_t_l %>% filter(Colony == "LOC", ID_i == "LOC1", ID_j == "OC1")
+DFt_t_l_LOC1_OC1 %>% filter(Index != 1) %>% 
+  group_by(Perm) %>% summarise(mean = mean(N), sd = sd(N))
+#mean 186.4014	sd 27.33093
+DFt_t_l_LOC1_OC1 %>% filter(Index == 1) %>% pull(N)
+#220
+ggplot(data = DFt_t_l_LOC1_OC1 %>% filter(Index != 1)) + 
+  geom_histogram(aes(x = N)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1, axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure6/Figure6B.pdf", width = 3, height = 3, units = "in")
+
+#follow index data (yj.z_value = follow index)
+DFt_t_l_sim_s <- DFt_t_l %>% 
+  group_by(Colony, Perm) %>% 
+  filter(Index != 1) %>% 
+  summarise(Mean = mean(N), SD = sd(N))
+zv_folt <- pv_folt %>% 
+  left_join(DFt_t_l_sim_s, join_by(Colony, Perm)) %>% 
+  mutate(z_value = (Value - Mean) / SD) %>% 
+  #Yeo-Johnson transformation & standardization (all)
+  mutate(yj.z_value = bestNormalize::yeojohnson(z_value)$x.t)
+
+#calculate shuffling control value
+zv_vect <- pv_folt %>% 
+  left_join(DFt_t_l_sim_s, join_by(Colony, Perm)) %>% 
+  mutate(z_value = (Value - Mean) / SD) %>% 
+  pull(z_value)
+zv_vect_yj <- bestNormalize::yeojohnson(zv_vect)
+zv_zero <- (0 - zv_vect_yj$mean) / zv_vect_yj$sd
+```
+
+##Heatmap for follow index (Figure 6C)
+```{r}
+#matrix function
+zv_mat_data_fol <- function(d, i){
+  colony <- colonyname[i]
+  id <- idlist[i] %>% unlist()
+  size <- length(id)
+  d0 <- tibble(ID1 = id, ID2 = id, x = rep(NA, size))
+  d %>% 
+    filter(Colony == colony) %>% 
+    select(ID1 = ID_i, ID2 = ID_j, x = yj.z_value) %>% 
+    bind_rows(d0) %>% 
+    mutate(ID1 = as.factor(ID1), ID2 = as.factor(ID2)) %>% 
+    arrange(ID1, ID2) %>% 
+    pivot_wider(names_from = ID2, values_from = x) %>% 
+    column_to_rownames(var = "ID1")
+}
+
+#pheatmap function
+zv_hm_fol <- function(d, i, name, clu){
+  colony <- colonyname[i]
+  ID <- idlist[i] %>% unlist()
+  Caste <- castelist[i] %>% unlist()
+  anno <- tibble(ID, Caste) %>% column_to_rownames(var = "ID")
+  Caste_col <- c("#AF528D","#54B345","grey")
+  names(Caste_col) <- c("BF","BM","NB")
+  anno_color <- list(Caste = Caste_col)
+  RdYlBu <- c("#313695", "#4575b4", "#74add1", "#abd9e9", "#e0f3f8", "#ffffbf", 
+              "#fee090", "#fdae61", "#f46d43", "#d73027","#a50026")
+  
+  val <- d %>% rowSums(1:length(ID)) %>% as_tibble() %>% pull(value)
+  callback = function(hc, mat){
+    dend = reorder(as.dendrogram(hc), wts = -val)
+    as.hclust(dend)
+  }
+  
+  pheatmap(
+    mat = d,
+    na_col = "white",
+    annotation_row = anno, 
+    annotation_col = anno,
+    annotation_colors = anno_color,
+    cellheight = 10, cellwidth = 10,
+    border_color = "NA",
+    breaks = seq(zv_min, zv_max, length.out = 100),
+    color = colorRampPalette(RdYlBu)(n=100),
+    annotation_legend = FALSE,
+    annotation_names_row = name, annotation_names_col = name,
+    show_rownames = name, show_colnames = name,
+    legend = name,
+    cluster_rows = clu, cluster_cols = clu,
+    clustering_method = "ward.D2",
+    clustering_callback = callback,
+    filename = paste0("data/Figure/Figure6/Figure6C/", colony, "_name", name, "_clu", clu, ".pdf")
+    )
+}
+
+#perform
+for(i in 1:5){
+  colony <- colonyname[i]
+  d <- zv_folt %>% filter(Colony == colony)
+  zv_mat <- zv_mat_data_fol(d, i)
+  zv_hm_fol(zv_mat, i, varname, name=F, clu=T)
+  zv_hm_fol(zv_mat, i, varname, name=T, clu=T)
+}
+```
+
+##Heatmap for p-value (Figure 6D)
+```{r}
+#id sequence from figure 6C
+id_1_follow_r <- c("2B33", "2B42", "M14", "2B32", "2B35", "M4", "2B46", "2B51", "2B44", "2B38", "2B43",
+                "2B50", "2B39", "2B48", "2B34", "2B36", "2B47", "2B45", "2B40", "2B41", "2B37", "2B49")
+id_1_follow_c <- c("M4", "M14", "2B33", "2B32", "2B35", "2B34", "2B39", "2B45", "2B42", "2B38", "2B41",
+                "2B37", "2B49", "2B51", "2B47", "2B48", "2B40", "2B50", "2B36", "2B43", "2B46", "2B44")
+id_2_follow_r <- c("2D31", "2D29", "2D34", "2D26", "2D13", "2D12", "2D24", "2D35", "2D30",
+                   "2D32", "2D33", "2D11", "H11", "2D19", "2D16", "2D28", "2D23")
+id_2_follow_c <- c("2D13", "2D34", "2D32", "2D33", "2D26", "2D24", "2D29", "2D28", "2D31",
+                   "2D16", "2D19", "2D23", "2D11", "2D35", "2D12", "2D30", "H11")
+id_3_follow_r <- c("HG24", "HG10", "HG23", "HG5", "HG19", "HG22", "HG14", "HG21", "HG16", "HG4",
+                   "HG12", "HG7", "HG11", "HG13", "HG15", "HG8", "HG18", "G16", "H13")
+id_3_follow_c <- c("HG24", "HG14", "HG21", "HG23", "HG10", "HG19", "HG16", "HG11", "HG18", "HG22",
+                   "HG5", "HG15", "HG13", "HG12", "HG7", "HG8", "HG4", "G16", "H13")
+id_4_follow_r <- c("HT14", "HT11", "HT5", "HT4", "HT12", "HT9", "HT13", "HT7", "HT10", "HT1", "HT6",
+                  "HT2", "HT3", "HT17", "HT15", "HT19", "HT21", "HT16", "L63", "R21", "HT20", "HT18")
+id_4_follow_c <- c("HT3", "HT16", "HT21", "HT15", "HT17", "HT20", "HT18", "HT19", "HT5", "R21", "L63",
+                  "HT11", "HT12", "HT10", "HT7", "HT13", "HT9", "HT14", "HT4", "HT2", "HT6", "HT1")
+id_5_follow_r <- c("LOC16", "LOC14", "LOC15", "LOC10", "LOC7", "LOC5", "LOC13", "LOC9", 
+                   "LOC8", "LOC11", "LOC4", "LOC17", "OC1", "LOC2", "LOC6", "LOC22",
+                   "LOC23", "LOC1", "LOC20", "LOC18", "LOC19", "L55")
+id_5_follow_c <- c("LOC7", "LOC14", "LOC13", "LOC8", "LOC9", "LOC11", "LOC15", "LOC10",
+                   "LOC16", "LOC17", "LOC18", "LOC4", "LOC1", "LOC5", "LOC6", "LOC2",
+                   "LOC20", "LOC23", "LOC22", "LOC19", "L55", "OC1")
+idlist_follow_r <- list(id_1_follow_r, id_2_follow_r, id_3_follow_r, id_4_follow_r, id_5_follow_r)
+idlist_follow_c <- list(id_1_follow_c, id_2_follow_c, id_3_follow_c, id_4_follow_c, id_5_follow_c)
+
+
+#matrix function
+pv_mat_data_fol <- function(d, i, var, order_r, order_c){
+  colony <- colonyname[i]
+  id <- idlist[i] %>% unlist()
+  size <- length(id)
+  d0 <- tibble(ID1 = id, ID2 = id, x = rep(NA, size))
+  d %>% 
+    filter(Colony == colony) %>% 
+    select(ID1 = ID_i, ID2 = ID_j, x = !!sym(var)) %>% 
+    bind_rows(d0) %>% 
+    mutate(ID1 = factor(ID1, levels = order_r),
+           ID2 = factor(ID2, levels = order_c)) %>% 
+    arrange(ID1, ID2) %>% 
+    pivot_wider(names_from = ID2, values_from = x) %>% 
+    column_to_rownames(var = "ID1")
+}
+
+#pheatmap function
+pv_hm_fol <- function(d, i, name, clu){
+  colony <- colonyname[i]
+  ID <- idlist[i] %>% unlist()
+  Caste <- castelist[i] %>% unlist()
+  anno <- tibble(ID, Caste) %>% column_to_rownames(var = "ID")
+  Caste_col <- c("#AF528D","#54B345","grey")
+  names(Caste_col) <- c("BF","BM","NB")
+  anno_color <- list(Caste = Caste_col)
+  RdYlBu <- c("#313695", "#4575b4", "#74add1", "#abd9e9", "#e0f3f8", "#ffffbf", 
+              "#fee090", "#fdae61", "#f46d43", "#d73027","#a50026")
+  pheatmap(
+    mat = d,
+    na_col = "white",
+    annotation_row = anno, 
+    annotation_col = anno,
+    annotation_colors = anno_color,
+    cellheight = 10, cellwidth = 10,
+    border_color = "NA",
+    breaks = seq(log10(0.002), -log10(0.002), length.out=100),
+    color = colorRampPalette(RdYlBu)(n=100),
+    annotation_legend = FALSE,
+    annotation_names_row = name, annotation_names_col = name,
+    show_rownames = name, show_colnames = name,
+    legend = name,
+    cluster_rows = clu, cluster_cols = clu,
+    filename = paste0("data/Figure/Figure6/Figure6D/", colony, "_name", name, "_clu", clu, ".pdf")
+    )
+}
+
+#run
+for(i in 1:5){
+  d <- pv_folt
+  var <- "P_score"
+  order_r <- idlist_follow_r[i] %>% unlist()
+  order_c <- idlist_follow_c[i] %>% unlist()
+  pv_mat <- pv_mat_data_fol(d, i, var, order_r, order_c)
+  pv_hm_fol(pv_mat, i, varname, name=F, clu=F)
+}
+```
+
+##Network (Figure 6E)
+```{r}
+#network function
+net_vis_z_folt <- function(d, i, var){
+  colony <- colonyname[i]
+  ID <- idlist[i] %>% unlist()
+  size <- length(ID)
+  caste <- castelist[i] %>% unlist()
+  
+  d_sig <- d %>% filter(Colony == colony) %>% 
+    filter(Sign == "Plus", P < 0.05) %>% select(ID_j, ID_i, !!sym(var))
+  
+  id_data <- tibble(ID, caste) %>% 
+    mutate(caste_ind = case_when(caste == "BF" ~ 1, caste == "BM" ~ 2, caste == "NB" ~ 3))
+  
+  set.seed(15)
+  pdf(paste0("data/Figure/Figure6/Figure6E/", colony, ".pdf"), width = 3, height = 3)
+  net_ss <- graph_from_data_frame(d = d_sig, vertices = id_data, directed = TRUE)
+  w <- d_sig %>% pull(!!sym(var)) %>% rescale(c(0.01,1))
+  wt <- (1 - ((w-min(w)) / (max(w)-min(w))))
+  E(net_ss)$width <- w
+  col <- c("#AF528D","#54B345","grey")
+  V(net_ss)$color <- col[V(net_ss)$caste_ind]
+  c = wt * 0.8
+  plot(net_ss, 
+       edge.color = rgb(c,c,c), edge.curved = 0.3, edge.arrow.size = 0.1, 
+       vertex.label = NA, vertex.frame.color = NA, vertex.label.color = "black", 
+       vertex.label.cex = 0.1, vertex.size = 10)
+  dev.off()
+}
+
+#run
+for(i in 1:5){
+  var <- "z.yj.z_value"
+  net_vis_z_folt(zv_folt, i, var)
+}
+```
+
+##Network & behavioral cluster (Figure S6F)
+```{r}
+#network function
+net_vis_z_behtype_fol <- function(d, i, var, varname){
+  colony <- colonyname[i]
+  ID <- idlist[i] %>% unlist()
+  size <- length(ID)
+  cluster <- d_behtype_mean_d %>% filter(Colony == colony) %>% pull(Cluster)
+  
+  d_sig <- d %>% filter(Colony == colony) %>% 
+    filter(Sign == "Plus", P < 0.05) %>% select(ID_j, ID_i, !!sym(var))
+  
+  id_data <- tibble(ID, cluster) %>% mutate(cluster_ind = as.integer(cluster))
+  
+  set.seed(15)
+  pdf(paste0("data/Figure/Figure6/FigureS6F/", colony, ".pdf"), width = 3, height = 3)
+  net_ss <- graph_from_data_frame(d = d_sig, vertices = id_data, directed = TRUE)
+  w <- d_sig %>% pull(!!sym(var)) %>% rescale(c(0.01,1))
+  wt <- (1 - ((w-min(w)) / (max(w)-min(w))))
+  E(net_ss)$width <- w
+  V(net_ss)$color <- colorlist[V(net_ss)$cluster_ind]
+  c = wt * 0.8
+  plot(net_ss, 
+       edge.color = rgb(c,c,c), edge.curved = 0.3, edge.arrow.size = 0.1, 
+       vertex.label = NA, vertex.frame.color = NA, vertex.label.color = "black", 
+       vertex.label.cex = 0.1, vertex.size = 10)
+  dev.off()
+}
+
+#run
+for(i in 1:5){
+  var <- "yj.z_value"
+  net_vis_z_behtype_fol(zv_folt, i, var)
+}
+```
+
+
+#3 Statistical analysis using follow index
+
+##Add individual attribute
+```{r}
+#data
+zv_folt_att <- zv_folt %>% 
+  select(Colony, ID1 = ID_i, ID2 = ID_j, yj.z_value, Sign, P) %>% 
+  left_join(ID_att_1, by = join_by(Colony, ID1)) %>% 
+  left_join(ID_att_2, by = join_by(Colony, ID2)) %>% 
+  mutate(Sig = case_when(
+    Sign == "Plus" & P < 0.05 ~ "Posive", Sign == "Minus" & P < 0.05 ~ "Negative", TRUE ~ "NS")
+    ) %>% 
+  mutate(Sig = factor(Sig, levels = c("Posive", "NS", "Negative"))) %>% 
+  select(Colony, ID1, ID2, yj.z_value, Sig,
+         Caste1, Caste2, Sex1, Sex2, AgeD1, AgeD2, Weight1, Weight2)
+
+#add relative age & relative body weight data for nonbreeders
+ID_att_nb <- ID_att %>% 
+  filter(Caste == "N") %>% 
+  group_by(Colony) %>% 
+  mutate(log_Age = log(AgeD), zAge = scale(log_Age), zWeight = scale(Weight)) %>% 
+  ungroup() %>% 
+  select(Colony, ID, zAge, zWeight)
+ID_att_nb1 <- ID_att_nb %>% select(Colony, ID1 = ID, zAge1 = zAge, zWeight1 = zWeight)
+ID_att_nb2 <- ID_att_nb %>% select(Colony, ID2 = ID, zAge2 = zAge, zWeight2 = zWeight)
+
+zv_folt_att <- zv_folt_att %>% 
+  left_join(ID_att_nb1, join_by(Colony, ID1)) %>% 
+  left_join(ID_att_nb2, join_by(Colony, ID2))
+```
+
+##Colony-level (Figures S6A)
+```{r}
+#significant/ns proportion per colony (Figure S6A)
+zv_folt_att_prop <- zv_folt_att %>% 
+  group_by(Colony, Sig) %>% summarise(n = n()) %>% mutate(p = n / sum(n))
+
+ggplot(data = zv_folt_att_prop, aes(x = Colony, y = p, fill = Sig)) + 
+  geom_bar(stat = "identity", position = "stack", width = 0.7) + 
+  scale_fill_manual(values = c("#E6855E", "#BEBEBE", "#44A5CB")) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1.5, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+#1 sp 0.1450, ns 0.7208, sn 0.1342
+#2 sp 0.3713, ns 0.4963, sn 0.1324
+#3 sp 0.4883, ns 0.4562, sn 0.0556
+#4 sp 0.4134, ns 0.5411, sn 0.0454
+#5 sp 0.2143, ns 0.7186, sn 0.0671
+ggsave("data/Figure/Figure6/FigureS6A.pdf", width = 3, height = 4.5, units = "in")
+```
+
+
+##Caste difference (Figure 6F)
+```{r}
+#data
+zv_folt_att_castecomb <- zv_folt_att %>% 
+  select(Colony, ID1, ID2, yj.z_value, Caste1, Caste2) %>% 
+  unite("CasteComb", c(Caste2, Caste1), sep = "_", remove = F)
+
+#model
+lmm_fft_castecomb <- lmerTest::lmer(
+  data = zv_folt_att_castecomb %>% mutate(CasteComb = as.factor(CasteComb)), 
+  formula = yj.z_value ~ CasteComb + (1|Colony)
+)
+r.squaredGLMM(lmm_fft_castecomb)
+#R2m 0.09014773 R2c 0.1838073
+Anova(lmm_fft_castecomb, test.statistic = "Chisq")
+#Sum Sq   Df  Pr(>F)
+#CasteComb  220.79  3  < 2.2e-16 ***
+
+#deviation of EMMs from shuffling control (zv_zero)
+emm <- emmeans(lmm_fft_castecomb, ~ CasteComb)
+test_res <- test(emm, null = zv_zero) %>% as_tibble()
+write.csv(test_res, row.names = F, "data/statistical_result/Figure6F_test.csv")
+
+#multiple comparisons of EMMs
+emm_pair <- emmeans(lmm_fft_castecomb, pairwise ~ CasteComb)
+pairs_res <- pairs(emm_pair, adjust = "holm")
+write.csv(pairs_res, row.names = F, "data/statistical_result/Figure6F_pairs.csv")
+
+#plot
+p_lmm_fft_castecomb_zero <- ggpredict(lmm_fft_castecomb_zero, terms = c("CasteComb [all]"))
+ggplot() + 
+  geom_hline(yintercept = zv_zero, linetype = "dashed", color = "grey") + 
+  geom_beeswarm(data = zv_folt_att_castecomb, 
+                aes(x = CasteComb, y = yj.z_value), 
+                size = 0.4, cex = 0.55, alpha = 0.4) + 
+  geom_errorbar(data = p_lmm_fft_castecomb_zero, 
+                aes(x = x, ymax = predicted + zv_zero, ymin = predicted + zv_zero),
+                size = 1, width = 0.5) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1.5, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure6/Figure6F.pdf", width = 4, height = 6, units = "in")
+```
+
+##BF vs BM in B-B data (Figure S6B)
+```{r}
+#data
+zv_folt_att_qk <- zv_folt_att %>% filter(Caste1 == "B", Caste2 == "B")
+
+#paired t-test
+bb_bf_vect_t <- zv_folt_att_qk %>% filter(Sex2 == "BF") %>% pull(yj.z_value) %>% as.vector()
+bb_bm_vect_t <- zv_folt_att_qk %>% filter(Sex2 == "BM") %>% pull(yj.z_value) %>% as.vector()
+shapiro.test(bb_bf_vect_t - bb_bm_vect_t)
+t.test(bb_bf_vect_t, bb_bm_vect_t, paired = T)
+#mean dif=-1.073586, t=-2.3048, df=4, p=0.08251
+
+#plot
+ggplot(zv_folt_att_qk, aes(x = Sex2, y = yj.z_value, group = Colony)) + 
+  geom_point(size = 1) + 
+  geom_line() + 
+  labs(x = "Follower", y = "Follow index") + 
+  theme_classic() + 
+  theme(aspect.ratio = 2.1,
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure6/FigureS6B.pdf", width = 2, height = 4, units = "in")
+```
+
+##Sex combination
+
+###B-NB data (Figure S6C)
+```{r}
+#data
+zv_folt_att_nbb <- zv_folt_att %>% 
+  filter(Caste1 == "N", Caste2 == "B") %>% 
+  unite("SexComb", c(Sex2, Sex1), sep = "_", remove = F)
+
+#model
+lmm_fft_nbb_sexcomb_all <- lmerTest::lmer(
+  data = zv_folt_att_nbb, 
+  formula = yj.z_value ~ SexComb + (1|Colony)
+)
+r.squaredGLMM(lmm_fft_nbb_sexcomb_all)
+#R2m 0.003220203 R2c 0.09806367
+Anova(lmm_fft_nbb_sexcomb_all, test.statistic = "Chisq")
+##x2=0.6475, Df=3, p=0.8855
+
+#multiple comparisons of EMMs
+emm_pair <- emmeans(lmm_fft_nbb_sexcomb_all, pairwise ~ SexComb)
+pairs_res <- pairs(emm_pair, adjust = "holm") %>% as_tibble()
+write.csv(pairs_res, row.names = F, "data/statistical_result/FigureS6C.csv")
+
+#plot
+lmm_fft_nbb_sexcomb_all_p <- ggpredict(lmm_fft_nbb_sexcomb_all, terms = "SexComb")
+ggplot() + 
+  geom_beeswarm(data = zv_folt_att_nbb, 
+                aes(x = SexComb, y = yj.z_value), 
+                size = 1.5, cex = 2.5, alpha = 0.4) + 
+  geom_errorbar(data = lmm_fft_nbb_sexcomb_all_p, 
+                aes(x = x, ymax = predicted, ymin = predicted),
+                size = 1, width = 0.5) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1.65, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure6/FigureS6C.pdf", width = 2.5, height = 4, units = "in")
+```
+
+###NB-B data (Figure S6D)
+```{r}
+#data
+zv_folt_att_bnb <- zv_folt_att %>% 
+  filter(Caste1 == "B", Caste2 == "N") %>% 
+  unite("SexComb", c(Sex2, Sex1), sep = "_", remove = F)
+
+#model
+lmm_fft_bnb_sexcomb_all <- lmerTest::lmer(
+  data = zv_folt_att_bnb, 
+  formula = yj.z_value ~ SexComb + (1|Colony)
+)
+r.squaredGLMM(lmm_fft_bnb_sexcomb_all)
+#R2m 0.03622761 R2c 0.1207381
+Anova(lmm_fft_bnb_sexcomb_all, test.statistic = "Chisq")
+##x2=7.5319, Df=3, p=0.05674
+
+#multiple comparisons of EMMs
+emm_pair <- emmeans(lmm_fft_bnb_sexcomb_all, pairwise ~ SexComb)
+pairs_res <- pairs(emm_pair, adjust = "holm") %>% as_tibble()
+write.csv(pairs_res, row.names = F, "data/statistical_result/FigureS6D.csv")
+
+#plot
+lmm_fft_bnb_sexcomb_all_p <- ggpredict(lmm_fft_bnb_sexcomb_all, terms = "SexComb")
+ggplot() + 
+  geom_beeswarm(data = zv_folt_att_bnb, 
+                aes(x = SexComb, y = yj.z_value), 
+                size = 1.5, cex = 2.5, alpha = 0.4) + 
+  geom_errorbar(data = lmm_fft_bnb_sexcomb_all_p, 
+                aes(x = x, ymax = predicted, ymin = predicted),
+                size = 1, width = 0.5) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1.65, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure6/FigureS6D.pdf", width = 2.5, height = 4, units = "in")
+```
+
+###NB-NB data (Figure S6E)
+```{r}
+#data
+zv_folt_att_nbnb <- zv_folt_att %>% 
+  filter(Caste1 == "N", Caste2 == "N") %>% 
+  unite("SexComb", c(Sex2, Sex1), sep = "_", remove = F)
+
+#model
+lmm_fft_nbnb_sexcomb_all <- lmerTest::lmer(
+  data = zv_folt_att_nbnb, 
+  formula = yj.z_value ~ SexComb + (1|Colony)
+)
+r.squaredGLMM(lmm_fft_nbnb_sexcomb_all)
+#R2m 0.03608966 R2c 0.168823
+Anova(lmm_fft_nbnb_sexcomb_all, test.statistic = "Chisq")
+##x2=69.269, Df=3, p<0.001
+
+#multiple comparisons of EMMs
+emm_pair <- emmeans(lmm_fft_nbnb_sexcomb_all, pairwise ~ SexComb)
+pairs_res <- pairs(emm_pair, adjust = "holm") %>% as_tibble()
+write.csv(pairs_res, row.names = F, "data/statistical_result/FigureS6E.csv")
+
+#plot
+lmm_fft_nbnb_sexcomb_all_p <- ggpredict(lmm_fft_nbnb_sexcomb_all, terms = "SexComb")
+lmm_fft_nbnb_sexcomb_all_p
+ggplot() + 
+  geom_beeswarm(data = zv_folt_att_nbnb, 
+                aes(x = SexComb, y = yj.z_value), 
+                size = 0.4, cex = 0.9, alpha = 0.4) + 
+  geom_errorbar(data = lmm_fft_nbnb_sexcomb_all_p, 
+                aes(x = x, ymax = predicted, ymin = predicted),
+                size = 1, width = 0.5) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1.65, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure6/FigureS6E.pdf", width = 2.5, height = 4, units = "in")
+```
+
+##BF vs BM related to nonbreeder's weight in B-NB data (Figure 6G)
+```{r}
+#model
+lmm_fft_nbb_zwei <- lmerTest::lmer(
+  data = zv_folt_att_nbb, 
+  formula = yj.z_value ~ poly(zWeight1,2) * Sex2 + (1|Colony)
+)
+r.squaredGLMM(lmm_fft_nbb_zwei)
+#R2m 0.1064013 R2c 0.2047355
+model_res <- summary(lmm_fft_nbb_zwei)$coefficients %>% as.data.frame()
+write.csv(model_res, row.names = T, "data/statistical_result/Figure6G.csv")
+
+Anova(lmm_fft_nbb_zwei, test = "Chisq")
+#Chisq Df Pr(>Chisq)
+#poly(zWeight1, 2)      16.1073  2  0.0003179 ***
+#Sex2                    0.1446  1  0.7037155    
+#poly(zWeight1, 2):Sex2  8.2319  2  0.0163104 *
+
+#plot
+lmm_fft_nbb_zwei_p <- ggpredict(lmm_fft_nbb_zwei, terms = c("zWeight1 [all]", "Sex2"))
+ggplot() + 
+  geom_point(data = zv_folt_att_nbb, 
+             aes(x = zWeight1, y = yj.z_value, color = Sex2, shape = Sex2)) + 
+  geom_line(data = lmm_fft_nbb_zwei_p, aes(x = x, y = predicted, color = group)) + 
+  geom_ribbon(data = lmm_fft_nbb_zwei_p, 
+              aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.1) + 
+  scale_color_manual(values = c("#AF528D", "#54B345")) + 
+  scale_fill_manual(values = c("#AF528D", "#54B345")) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure6/Figure6G.pdf", 
+       width = 4, height = 4, units = "in")
+```
+
+##BF vs BM related to nonbreeder's age in B-NB data (Figure S6F)
+```{r}
+#model
+lmm_fft_nbb_zage <- lmerTest::lmer(
+  data = zv_folt_att_nbb, 
+  formula = yj.z_value ~ poly(zAge1,2) * Sex2 + (1|Colony)
+)
+r.squaredGLMM(lmm_fft_nbb_zage)
+#R2m 0.1254181 R2c 0.2241243
+model_res <- summary(lmm_fft_nbb_zage)$coefficients %>% as.data.frame()
+write.csv(model_res, row.names = T, "data/statistical_result/FigureS6F.csv")
+
+Anova(lmm_fft_nbb_zage, test = "Chisq")
+#Chisq Df Pr(>Chisq)
+#poly(zAge1, 2)      24.8486  2   4.02e-06 ***
+#Sex2                 0.1483  1     0.7001    
+#poly(zAge1, 2):Sex2  4.5834  2     0.1011
+
+#plot
+lmm_fft_nbb_zage_p <- ggpredict(lmm_fft_nbb_zage, terms = c("zAge1 [all]", "Sex2"))
+ggplot() + 
+  geom_point(data = zv_folt_att_nbb, 
+             aes(x = zAge1, y = yj.z_value, color = Sex2, shape = Sex2)) + 
+  geom_line(data = lmm_fft_nbb_zage_p, aes(x = x, y = predicted, color = group)) + 
+  geom_ribbon(data = lmm_fft_nbb_zage_p, 
+              aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.1) + 
+  scale_color_manual(values = c("#AF528D", "#54B345")) + 
+  scale_fill_manual(values = c("#AF528D", "#54B345")) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure6/FigureS6F.pdf", width = 4, height = 4, units = "in")
+```
+
+##Behavioral cluster combination (Figure 6H)
+```{r}
+#data
+d_behtype_mean <- read.csv("data/processed_data/representative_cluster.csv")
+d_behtype_mean1 <- d_behtype_mean %>% select(Colony, ID1 = ID, Cluster1 = Cluster)
+d_behtype_mean2 <- d_behtype_mean %>% select(Colony, ID2 = ID, Cluster2 = Cluster)
+
+zv_folt_att_behtypeperm <- zv_folt_att %>% 
+  left_join(d_behtype_mean1, by = join_by(Colony, ID1)) %>% 
+  left_join(d_behtype_mean2, by = join_by(Colony, ID2)) %>% 
+  drop_na(Cluster1, Cluster2) %>% 
+  unite("ClusterComb", c(Cluster2, Cluster1), sep = "_", remove = F) %>% 
+  mutate(ClusterComb = as.factor(ClusterComb),
+         Cluster1 = as.factor(Cluster1),
+         Cluster2 = as.factor(Cluster2))
+
+#model
+lmm_fft_behtypecomb <- lmerTest::lmer(
+  data = zv_folt_att_behtypecomb, 
+  formula = yj.z_value ~ ClusterComb + (1|Colony)
+)
+r.squaredGLMM(lmm_fft_behtypecomb)
+#R2m 0.156148 R2c 0.2475557
+Anova(lmm_fft_behtypecomb, test.statistic = "Chisq")
+#Chisq Df Pr(>Chisq)
+#Cluster_perm  405.73 48  < 2.2e-16 ***
+
+#deviation of EMMs from mean (0)
+emm <- emmeans(lmm_fft_behtypecomb, ~ ClusterComb)
+test_res <- test(emm, null = 0) %>% as_tibble()
+write.csv(test_res, row.names = F, "data/statistical_result/Figure6H.csv")
+
+#plot
+lmm_fft_behtypecomb_all <- lmerTest::lmer(
+  data = zv_folt_att_behtypecomb, 
+  formula = yj.z_value ~ Cluster1 * Cluster2 + (1|Colony)
+)
+lmm_fft_behtypecomb_all_p <- ggpredict(lmm_fft_behtypecomb_all, terms = c("Cluster2 [all]", "Cluster1 [all]"))
+colorlist <- c("#BE5378", "#CE7754", "#DFC44E", "#54B345", "#3B98B2", "#5F7EB2", "#808080")
+ggplot() + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey") + 
+  geom_violin(data = zv_folt_att_behtypecomb, 
+              aes(x = Cluster2, y = yj.z_value, color = Cluster1),
+              position = position_dodge(width = 0.8), width = 0.5, scale = "width") + 
+  geom_errorbar(data = lmm_fft_behtypecomb_all_p, 
+                aes(x = x, ymax = predicted, ymin = predicted, color = group), 
+                position = position_dodge(width = 0.8), size = 1, width = 0.5) + 
+  scale_color_manual(values = colorlist) + 
+  theme_classic() + 
+  theme(aspect.ratio = 0.25, legend.position = "none",
+        axis.title = element_blank(), axis.text = element_blank())
+ggsave("data/Figure/Figure6/Figure6H.pdf", width = 16, height = 4, units = "in")
+```
+
+
