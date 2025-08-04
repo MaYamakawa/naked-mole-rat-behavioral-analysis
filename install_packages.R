@@ -1,5 +1,6 @@
 install.packages(c(
   "bestNormalize",
+  "brms",
   "broom",
   "car",
   "data.table",
@@ -7,9 +8,11 @@ install.packages(c(
   "ggraph",
   "ggeffects",
   "ggbeeswarm",
+  "glmmTMB",
   "igraph",
   "imager",
   "lmerTest",
+  "lubridate",
   "magick",
   "MASS",
   "MuMIn",
@@ -18,5 +21,5 @@ install.packages(c(
   "performance",
   "pheatmap",
   "scales",
-  "tidyverse"
+  "tidyverse",
 ))

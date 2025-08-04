@@ -161,7 +161,7 @@ nperm <- 1000
 
 for(l in 1:5){
   d_f <- move_event_data(l)
-  system.time(follow_pttest_t(d_f, 1, nperm))
+  system.time(follow_pttest_t(d_f, l, nperm))
   
   size <- idlist[l] %>% unlist() %>% length()
   DFt <- tibble(DF_i, DF_j, DF_ijs, DF_jis)
@@ -868,5 +868,646 @@ ggplot() +
         axis.title = element_blank(), axis.text = element_blank())
 ggsave("data/Figure/Figure6/Figure6H.pdf", width = 16, height = 4, units = "in")
 ```
+
+
+#4 Centrality for six 5-day subsets
+
+##Permutation
+```{r}
+follow_pttest_t_5 <- function(d, colony, nperm){
+
+  id <- idlist[[colony]]
+  size <- length(id)
+  set.seed(10)
+
+  # result list
+  DF_i <- list(); DF_j <- list()
+  DF_ijs <- list(); DF_jis <- list()
+
+  # dyad data
+  id_pairs <- expand.grid(i = 1:(size - 1), j = (2:size)) %>% filter(i < j)
+
+  # parallel setting
+  cl <- makeCluster(detectCores() - 1)
+  clusterExport(cl, list("d", "nperm", "id", "size", "mutate", "lag", "inner_join", "%>%", "runif", "set.seed"))
+  clusterEvalQ(cl, {library(dplyr)})
+
+  # 6-set loop
+  results_all <- list()
+  for(set_idx in 1:6){
+
+    d_sub <- d %>% filter(Time >= 86400 * 5 * (set_idx - 1),
+                          Time < 86400 * 5 * set_idx)
+
+    results <- parLapply(cl, 1:nrow(id_pairs), function(idx) {
+      i <- id_pairs$i[idx]
+      j <- id_pairs$j[idx]
+
+      res_i <- list(); res_j <- list()
+      res_ij <- list(); res_ji <- list()
+
+      # id i&j data
+      d_ij <- d_sub %>% filter(ID == id[i] | ID == id[j]) %>% arrange(Time)
+      d_i <- d_ij %>% filter(ID == id[i])
+      d_i_time <- d_i %>% pull(Time)
+      d_i_fromto <- d_i %>% pull(From_To)
+      d_j <- d_ij %>% filter(ID == id[j])
+
+      d_ij_ind <- d_ij %>%
+        mutate(Time_lag = lag(Time, n=1),
+               dif_Time = Time - Time_lag,
+               dif = if_else(dif_Time > 3, 1, 0),
+               dif = if_else(row_number() == 1, 1, dif),
+               Index = as.integer(cumsum(dif))) %>%
+        group_by(Index) %>%
+        mutate(n_dist = n_distinct(ID)) %>%
+        ungroup()
+      Index <- d_ij_ind %>% pull(Index)
+      n_dist <- d_ij_ind %>% pull(n_dist)
+
+      shuffle_indices <- sample(1:(length(d_i_fromto)-1), nperm-1)
+      d_i_fromto_list <- list(0)
+
+      Df_i <- numeric(nperm); Df_j <- numeric(nperm)
+      Df_ij <- numeric(nperm); Df_ji <- numeric(nperm)
+
+      for(k in 1:nperm){
+        if(k == 1){
+          d_ij_t <- d_ij
+        } else {
+          d_i_fromto_list[[k-1]] <- d_i_fromto[(seq_along(d_i_fromto) + shuffle_indices[k-1]) %% length(d_i_fromto) + 1]
+          d_i_t <- tibble(ID = id[i], Time = d_i_time, From_To = d_i_fromto_list[[k-1]])
+          d_ij_t <- bind_rows(d_i_t, d_j) %>% arrange(Time)
+        }
+
+        d_ij_ind <- d_ij_t %>%
+          mutate(Index = Index, n_dist = n_dist) %>%
+          filter(n_dist > 1) %>% select(-n_dist)
+
+        suppressWarnings({
+          d_ij_ind_sm <- d_ij_ind %>%
+            group_by(Index) %>%
+            inner_join(d_ij_ind, by = c("Index", "From_To"), suffix = c("_1", "_2")) %>%
+            filter(ID_1 != ID_2, ID_1 == id[i]) %>%
+            mutate(dif_Time = Time_1 - Time_2) %>%
+            filter(dif_Time >= -3, dif_Time <= 3, dif_Time != 0) %>%
+            mutate(n_ij = if_else(dif_Time < 0, 1, 0),
+                   n_ji = if_else(dif_Time > 0, 1, 0))
+
+          Df_i[k] <- id[i]; Df_j[k] <- id[j]
+          Df_ij[k] <- sum(d_ij_ind_sm$n_ij)
+          Df_ji[k] <- sum(d_ij_ind_sm$n_ji)
+        })
+
+        res_i <- list(Df_i); res_j <- list(Df_j)
+        res_ij <- list(Df_ij); res_ji <- list(Df_ji)
+      }
+
+      return(list(res_i, res_j, res_ij, res_ji))
+    })
+
+    # result save
+    results_all[[set_idx]] <- results
+  }
+
+  stopCluster(cl)
+  closeAllConnections()
+
+  # all results
+  DF_i <<- unlist(lapply(results_all, function(rs) lapply(rs, `[[`, 1)))
+  DF_j <<- unlist(lapply(results_all, function(rs) lapply(rs, `[[`, 2)))
+  DF_ijs <<- unlist(lapply(results_all, function(rs) lapply(rs, `[[`, 3)))
+  DF_jis <<- unlist(lapply(results_all, function(rs) lapply(rs, `[[`, 4)))
+}
+```
+
+##Integrate data
+```{r}
+nperm <- 1000
+
+for(l in 1:5){
+  d_f <- move_event_data(l)
+  system.time(follow_pttest_t_5(d_f, l, nperm))
+  
+  size <- idlist[[l]] %>% length()
+  dyad_n <- choose(size, 2)
+  DFt_all <- tibble(
+    ID_i = DF_i,
+    ID_j = DF_j,
+    n_ij = DF_ijs,
+    n_ji = DF_jis,
+    set = rep(1:6, each = nperm * dyad_n)
+  )
+  assign(paste0("DFt_", l), DFt_all)
+}
+#output data: DFt_1~5
+
+
+##Integrate data
+trans_tidy_follow_seg <- function(d, seg){
+  colony   <- as.integer(str_extract(obj_name, "(?<=DFt_)\\d+"))
+  id <- idlist[[colony]]
+  d %>% 
+    filter(set == seg) %>% 
+    select(ID_i, ID_j, n_ij, n_ji) %>% 
+    mutate(ID_i = factor(ID_i, levels = id),
+           ID_j = factor(ID_j, levels = id)) %>% 
+    arrange(ID_i, ID_j) %>% 
+    group_by(ID_i, ID_j) %>% 
+    mutate(Index = 1:1000) %>% 
+    ungroup() %>% 
+    pivot_longer(cols = -all_of(c("ID_i", "ID_j", "Index")), names_to = "Direction", values_to = "N") %>% 
+    mutate(ID_1 = ID_i, ID_2 = ID_j) %>% 
+    mutate(ID_i = if_else(Direction == "n_ji", ID_2, ID_i),
+           ID_j = if_else(Direction == "n_ji", ID_1, ID_j)) %>% 
+    unite("Perm", c(ID_i, ID_j), sep = "_", remove = F) %>% 
+    arrange(ID_i, ID_j, Index) %>% 
+    mutate(Colony = colony, Seg = seg) %>% 
+    select(Colony, Seg, Perm, ID_i, ID_j, Index, N)
+}
+
+df_list <- list()
+for (i in 1:5) {
+  for (j in 1:6) {
+    obj_name <- paste0("DFt_", i)
+    obj <- get(obj_name)
+    df_tidy <- trans_tidy_follow_seg(obj, j)
+    df_list[[length(df_list) + 1]] <- df_tidy
+  }
+}
+DF_t_t_l <- bind_rows(df_list)
+```
+
+##Follow index data
+```{r}
+#p-value summarize function
+pv_data_foll5 <- function(d, i, j){
+  d_i <- d %>% filter(Colony == i, Seg == j)
+  perm <- d_i %>% distinct(Perm, .keep_all = F) %>% pull(Perm)
+  d_i %>% 
+    group_by(ID_i, ID_j, Perm) %>% 
+    summarise(Value = N[Index == 1],
+              Med = median(N),
+              Pn = sum(N >= N[Index == 1]) / 1000) %>% 
+    mutate(Sign = if_else(Pn < 0.5, "Plus", "Minus")) %>% 
+    mutate(P = if_else(Sign == "Plus", Pn * 2, (1 - Pn)*2 + 0.002)) %>% 
+    mutate(logP = -log10(P),
+           P_score = if_else(Sign == "Plus", logP, -logP)) %>% 
+    mutate(Colony = i, Seg = j) %>% 
+    mutate(Perm = factor(Perm, levels = perm)) %>% 
+    select(Colony, Seg, Perm, ID_i, ID_j, 
+           Value, Med, Pn, Sign, P, logP, P_score) %>% 
+    arrange(Perm)
+}
+
+#run
+Colony <- 0; Seg <- 0; Perm <- "0"; ID_i <- "0"; ID_j <- "0"
+Value <- 0; Med <- 0; Pn <- 0; Sign <- "0"; P <- 0; logP <- 0; P_score <- 0
+pv0 <- tibble(Colony, Seg, Perm, ID_i, ID_j, Value, Med, Pn, Sign, P, logP, P_score)
+for(i in 1:5){
+  for(j in 1:6){
+    pv <- pv_data_foll5(DF_t_t_l, i, j)
+    pv0 <- pv0 %>% bind_rows(pv)
+  }
+}
+pv_foll5 <- pv0 %>% slice(-1)
+
+
+#follow index data (yj.z_value = follow index)
+DF_t_t_l_sim_s <- DF_t_t_l %>% 
+  group_by(Colony, Seg, Perm) %>% 
+  filter(Index != 1) %>% 
+  summarise(Mean = mean(N), SD = sd(N))
+zv_foll5 <- pv_foll5 %>% 
+  left_join(DF_t_t_l_sim_s, join_by(Colony, Seg, Perm)) %>% 
+  mutate(z_value = (Value - Mean) / SD, 
+         yj.z_value = yeojohnson(z_value)$x.t)
+```
+
+##Strength data
+```{r}
+strength_foll <- list()
+combs <- zv_foll5 %>% distinct(Colony, Seg)
+
+for (k in 1:nrow(combs)) {
+  col <- combs$Colony[k]
+  seg <- combs$Seg[k]
+
+  df_sub <- zv_foll5 %>% filter(Colony == col, Seg == seg)
+
+  g <- graph_from_data_frame(
+    d = df_sub %>% select(ID_j, ID_i, z_value),
+    directed = TRUE
+  )
+
+  in_vals <- strength(g, mode = "in", weights = E(g)$z_value)
+  out_vals <- strength(g, mode = "out", weights = E(g)$z_value)
+
+  result <- tibble(
+    Colony = col,
+    Seg = seg,
+    ID = names(in_vals),
+    In_Strength = as.numeric(in_vals),
+    Out_Strength = as.numeric(out_vals)
+  )
+
+  strength_foll[[length(strength_foll) + 1]] <- result
+}
+
+d_behtype_mean <- read.csv("data/processed_data/representative_cluster.csv") %>% 
+  mutate(Cluster = as.factor(Cluster))
+d_behtype_mean %>% group_by(Cluster) %>% summarise(n = n()) #16 14 11 13 7 31 9
+
+strength_foll <- bind_rows(strength_foll) %>%
+  left_join(ID_att %>% select(ID, Caste, Sex), join_by(ID)) %>%
+  left_join(d_behtype_mean %>% select(ID, Cluster), join_by(ID)) %>%
+  mutate(
+    ID = factor(ID, levels = id),
+    Caste = case_when(Sex == "BF" ~ "BF", Sex == "BM" ~ "BM", TRUE ~ Caste)
+  ) %>%
+  arrange(Colony, Seg, ID) %>% 
+  group_by(Colony, Seg) %>% 
+  mutate(Seg = factor(Seg, levels = rev(1:6)), 
+         yj.In_Strength = yeojohnson(In_Strength)$x.t,
+         yj.Out_Strength = yeojohnson(Out_Strength)$x.t) %>% #transform
+  ungroup() %>% 
+  unite(col = "ColSeg", Colony, Seg, sep = "_", remove = F)
+
+#mean data
+strength_foll_mean <- strength_foll %>% 
+  group_by(Colony, ID) %>% 
+  summarise(mean_in = mean(yj.In_Strength), sd_in = sd(yj.In_Strength),
+            mean_out = mean(yj.Out_Strength), sd_out = sd(yj.Out_Strength)) %>% 
+  arrange(Colony, ID)
+```
+
+##Individual differences in strength (Figure S7HI)
+```{r}
+#plot
+
+#yj.z_value heatmap
+for(i in 1:5){
+  colony <- colonyname[i]
+  size <- idlist[[i]] %>% length()
+  p <- ggplot(strength_foll %>% filter(Colony == i), 
+              aes(x = ID, y = Seg, fill = yj.Out_Strength)) + 
+    geom_tile() + 
+    scale_fill_gradientn(colors = colorRampPalette(RdYlBu)(n=100)) + 
+    theme_void() + 
+    theme(aspect.ratio = 10 / size, legend.position = "none")
+  ggsave(plot = p, 
+         paste0("data/Figure/Figure6/FigureS7H_heatmap_", colony, ".pdf"), 
+         width = 4 * size / 10, height = 4, units = "in")
+}
+
+for(i in 1:5){
+  colony <- colonyname[i]
+  size <- idlist[[i]] %>% length()
+  p <- ggplot(strength_foll %>% filter(Colony == i), 
+              aes(x = ID, y = Seg, fill = yj.In_Strength)) + 
+    geom_tile() + 
+    scale_fill_gradientn(colors = colorRampPalette(RdYlBu)(n=100)) + 
+    theme_void() + 
+    theme(aspect.ratio = 10 / size, legend.position = "none")
+  ggsave(plot = p, 
+         paste0("data/Figure/Figure6/FigureS7I_heatmap_", colony, ".pdf"), 
+         width = 4 * size / 10, height = 4, units = "in")
+}
+
+#yj.z_value mean heatmap
+for(i in 1:5){
+  colony <- colonyname[i]
+  size <- idlist[[i]] %>% length()
+  p <- ggplot(strength_foll_mean %>% filter(Colony == i), 
+              aes(x = ID, y = Seg, fill = mean_out)) + 
+    geom_tile() + 
+    scale_fill_gradientn(colors = colorRampPalette(RdYlBu)(n=100)) + 
+    theme_void() + 
+    theme(aspect.ratio = 10 / size / 6, legend.position = "none")
+  ggsave(plot = p, 
+         paste0("data/Figure/Figure6/FigureS7H_mean_heatmap_", colony, ".pdf"), 
+         width = 4 * size / 10, height = 4 / 6, units = "in")
+}
+
+for(i in 1:5){
+  colony <- colonyname[i]
+  size <- idlist[[i]] %>% length()
+  p <- ggplot(strength_foll_mean %>% filter(Colony == i), 
+              aes(x = ID, y = Seg, fill = mean_in)) + 
+    geom_tile() + 
+    scale_fill_gradientn(colors = colorRampPalette(RdYlBu)(n=100)) + 
+    theme_void() + 
+    theme(aspect.ratio = 10 / size / 6, legend.position = "none")
+  ggsave(plot = p, 
+         paste0("data/Figure/Figure6/FigureS7I_mean_heatmap_", colony, ".pdf"), 
+         width = 4 * size / 10, height = 4 / 6, units = "in")
+}
+
+
+#yj.z_value meansd
+for(i in 1:5){
+  colony <- colonyname[i]
+  p <- ggplot(strength_foll %>% filter(Colony == i), 
+              aes(x = ID, y = yj.Out_Strength, color = Caste)) + 
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey") + 
+    geom_jitter(size = 1, width = 0.25, height = 0, alpha = 0.5) + 
+    stat_summary(fun = mean, geom = "crossbar", width = 0.5) + 
+    stat_summary(fun.data = "mean_sdl", geom = "errorbar", width = 0) + 
+    scale_color_manual(values = c("#AF528D","#54B345","dimgrey")) + 
+    labs(x = "ID", y = "Strength") + 
+    theme_classic() + 
+    theme(aspect.ratio = 0.5, legend.position = "none")
+  ggsave(plot = p, 
+         paste0("data/Figure/Figure6/FigureS7H_meansdplot_", colony, ".pdf"), 
+         width = 8, height = 4, units = "in")
+}
+
+for(i in 1:5){
+  colony <- colonyname[i]
+  p <- ggplot(strength_foll %>% filter(Colony == i), 
+              aes(x = ID, y = yj.In_Strength, color = Caste)) + 
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey") + 
+    geom_jitter(size = 1, width = 0.25, height = 0, alpha = 0.5) + 
+    stat_summary(fun = mean, geom = "crossbar", width = 0.5) + 
+    stat_summary(fun.data = "mean_sdl", geom = "errorbar", width = 0) + 
+    scale_color_manual(values = c("#AF528D","#54B345","dimgrey")) + 
+    labs(x = "ID", y = "Strength") + 
+    theme_classic() + 
+    theme(aspect.ratio = 0.5, legend.position = "none")
+  ggsave(plot = p, 
+         paste0("data/Figure/Figure6/FigureS7I_meansdplot_", colony, ".pdf"), 
+         width = 8, height = 4, units = "in")
+}
+
+
+#Bayesian LMM for out-strength
+set.seed(100)
+blmm_folou_str_id <- brm(
+  formula = Out_Strength ~ 0 + ColSeg + (1 | ID),
+  data = strength_foll,
+  family = gaussian(),
+  chains = 4, iter = 4000, warmup = 1000
+)
+waic(blmm_folou_str_id) #4466.2
+
+re_blmm_folou_str_id <- posterior_samples(blmm_folou_str_id, pars = "^r_ID\\[")
+re_blmm_folou_str_id_summary <- re_blmm_folou_str_id %>%
+  pivot_longer(cols = everything(), names_to = "param", values_to = "value") %>%
+  mutate(ID = sub("r_ID\\[([^,]+),Intercept\\]", "\\1", param),
+         ID = factor(ID, levels = id)) %>%
+  group_by(ID) %>%
+  summarise(
+    Estimate = mean(value),
+    Lower95 = quantile(value, 0.025),
+    Upper95 = quantile(value, 0.975),
+    Lower99 = quantile(value, 0.005),
+    Upper99 = quantile(value, 0.995),
+    Lower999 = quantile(value, 0.0005),
+    Upper999 = quantile(value, 0.9995)
+  ) %>%
+  mutate(
+    Sig = case_when(Lower999 > 0 ~ "H***", Upper999 < 0 ~ "L***",
+                    Lower99 > 0 ~ "H**", Upper99 < 0 ~ "L**",
+                    Lower95 > 0 ~ "H*", Upper95 < 0 ~ "L*",
+                    TRUE ~ "ns")
+  )
+write.csv(re_blmm_folou_str_id_summary, row.names = F, 
+          "data/statistical_result/FigureS7H_test.csv")
+
+
+#Bayesian LMM for in-strength 
+set.seed(100)
+blmm_folin_str_id <- brm(
+  formula = In_Strength ~ 0 + ColSeg + (1 | ID),
+  data = strength_foll,
+  family = gaussian(),
+  chains = 4, iter = 4000, warmup = 1000
+)
+waic(blmm_folin_str_id) #4662.9
+
+re_blmm_folin_str_id <- posterior_samples(blmm_folin_str_id, pars = "^r_ID\\[")
+re_blmm_folin_str_id_summary <- re_blmm_folin_str_id %>%
+  pivot_longer(cols = everything(), names_to = "param", values_to = "value") %>%
+  mutate(ID = sub("r_ID\\[([^,]+),Intercept\\]", "\\1", param),
+         ID = factor(ID, levels = id)) %>%
+  group_by(ID) %>%
+  summarise(
+    Estimate = mean(value),
+    Lower95 = quantile(value, 0.025),
+    Upper95 = quantile(value, 0.975),
+    Lower99 = quantile(value, 0.005),
+    Upper99 = quantile(value, 0.995),
+    Lower999 = quantile(value, 0.0005),
+    Upper999 = quantile(value, 0.9995)
+  ) %>%
+  mutate(
+    Sig = case_when(Lower999 > 0 ~ "H***", Upper999 < 0 ~ "L***",
+                    Lower99 > 0 ~ "H**", Upper99 < 0 ~ "L**",
+                    Lower95 > 0 ~ "H*", Upper95 < 0 ~ "L*",
+                    TRUE ~ "ns")
+  )
+write.csv(re_blmm_folin_str_id_summary, row.names = F, 
+          "data/statistical_result/FigureS7I_test.csv")
+```
+
+##Cluster differences in strength (Figure S7JK)
+```{r}
+#plot
+colorlist <- c("#BE5378", "#CE7754", "#DFC44E", "#54B345", "#3B98B2", "#5F7EB2", "#808080")
+
+#Out-strength
+ggplot(strength_foll %>% filter(is.na(Cluster) == FALSE), 
+       aes(x = Cluster, y = yj.Out_Strength, color = Cluster)) + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey") + 
+  geom_beeswarm(cex = 1.5, size = 1.2, alpha = 0.5) + 
+  stat_summary(fun = mean, geom = "crossbar", width = 0.5, fatten = 2) + 
+  scale_color_manual(values = colorlist) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+ggsave("data/Figure/Figure6/FigureS7J.pdf", 
+       width =  4, height = 4, units = "in")
+
+#In-strength
+ggplot(strength_foll %>% filter(is.na(Cluster) == FALSE), 
+       aes(x = Cluster, y = yj.In_Strength, color = Cluster)) + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey") + 
+  geom_beeswarm(cex = 1.5, size = 1.2, alpha = 0.5) + 
+  stat_summary(fun = mean, geom = "crossbar", width = 0.5, fatten = 2) + 
+  scale_color_manual(values = colorlist) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+ggsave("data/Figure/Figure6/FigureS7K.pdf", 
+       width =  4, height = 4, units = "in")
+
+
+#Out-strength
+#LMM
+lmm_fol_outstr_clu <- lmerTest::lmer(
+  data = strength_foll,
+  Out_Strength ~ Cluster + (1|ID) + (1|ColSeg)
+)
+r2(lmm_fol_outstr_clu) #Conditional R2: 0.755 Marginal R2: 0.141
+#EMM
+emm <- emmeans(lmm_fol_outstr_clu, ~ Cluster)
+grand_mean <- mean(summary(emm)$emmean)
+test_res <- test(emm, null = grand_mean) %>% as_tibble()
+write.csv(test_res, row.names = F, 
+          "data/statistical_result/FigureS7J_test.csv")
+
+#In-strength
+#LMM
+lmm_fol_instr_clu <- lmerTest::lmer(
+  data = strength_foll,
+  In_Strength ~ Cluster + (1|ID) + (1|ColSeg)
+)
+r2(lmm_fol_instr_clu) #Conditional R2: 0.772 Marginal R2: 0.173
+#EMM
+emm <- emmeans(lmm_fol_instr_clu, ~ Cluster)
+grand_mean <- mean(summary(emm)$emmean)
+test_res <- test(emm, null = grand_mean) %>% as_tibble()
+write.csv(test_res, row.names = F, 
+          "data/statistical_result/FigureS7K_test.csv")
+```
+
+
+#5 Video-based behavioral annotation of follow events
+
+##Follow event data function
+```{r}
+follow_event_data <- function(d, colony){
+  id <- idlist[[colony]]
+  size <- length(id)
+  
+  #dyad data
+  id_pairs <- expand.grid(i = 1:(size - 1), j = (2:size)) %>% filter(i < j)
+  
+  all_events <- list()
+  
+  #loop
+  for (idx in 1:nrow(id_pairs)) {
+    i <- id_pairs$i[idx]
+    j <- id_pairs$j[idx]
+    
+    #id i&j data
+    d_ij <- d %>% filter(ID == id[i] | ID == id[j]) %>% arrange(Time)
+    d_i <- d_ij %>% filter(ID == id[i])
+    d_i_time <- d_i %>% pull(Time)
+    d_i_fromto <- d_i %>% pull(From_To)
+    d_j <- d_ij %>% filter(ID == id[j])
+    
+    #time window for 3-sec interval & index including one or two ID -> remove time window with only one individual 
+    d_ij_ind <- d_ij %>% 
+      mutate(Time_lag = lag(Time, n=1),
+             dif_Time = Time - Time_lag,
+             dif = if_else(dif_Time > 3, 1, 0),
+             dif = if_else(row_number() == 1, 1, dif),
+             Index = as.integer(cumsum(dif))) %>% 
+      group_by(Index) %>% 
+      mutate(n_dist = n_distinct(ID)) %>% 
+      ungroup() %>% 
+      filter(n_dist > 1)
+    
+    suppressWarnings({  #ignore warning about numerous numbers
+      d_ij_ind_sm <- d_ij_ind %>% 
+        #extract dyad with same Index & same From_To
+        group_by(Index) %>% 
+        inner_join(d_ij_ind, by = c("Index", "From_To"), suffix = c("_1", "_2")) %>% 
+        ungroup() %>% 
+        filter(ID_1 != ID_2, ID_1 == id[i]) %>% 
+        #identify directional follow times
+        mutate(dif_Time = Time_1 - Time_2) %>% 
+        filter(dif_Time >= -3, dif_Time <= 3, dif_Time != 0) %>% 
+        mutate(Day = Time_1 %/% 86400 + 1, 
+               Hour = (Time_1 %% 86400) %/% 3600, 
+               Minute = ((Time_1 %% 86400) %% 3600) %/% 60,
+               Second = ((Time_1 %% 86400) %% 3600) %% 60) %>% 
+        select(Day, Hour, Minute, Second, ID_1, Time_1, ID_2, Time_2, From_To, dif_Time)
+    })
+    
+    all_events[[idx]] <- d_ij_ind_sm
+  }
+  
+  bind_rows(all_events)
+}
+```
+
+##Run function
+```{r}
+d_fol_ev_all <- map_dfr(1:5, function(k) {
+  d_raw <- move_event_data(k)
+  d_ev <- follow_event_data(d_raw, k)
+  d_ev %>% mutate(Colony = k)
+})
+```
+
+##Add individual information
+```{r}
+ID_att_1 <- ID_att %>% select(ID_1 = ID, Caste_1 = Caste)
+ID_att_2 <- ID_att %>% select(ID_2 = ID, Caste_2 = Caste)
+
+d_fol_ev_all_att <- d_fol_ev_all %>% 
+  left_join(ID_att_1, join_by(ID_1)) %>% left_join(ID_att_2, join_by(ID_2)) %>% 
+  mutate(Caste_comb = case_when(
+    Caste_1 == "B" & Caste_2 == "B" ~ "B_B",
+    Caste_1 == "B" & Caste_2 == "N" & dif_Time > 0 ~ "B_N",
+    Caste_1 == "B" & Caste_2 == "N" & dif_Time < 0 ~ "N_B",
+    Caste_1 == "N" & Caste_2 == "N" ~ "N_N"
+  )) %>% 
+  mutate(Dayname = map2_chr(Colony, Day, ~ dayname[[.x]][.y])) %>% 
+  select(Colony, Dayname, Day, Hour, Minute, Second, From_To, Caste_comb, 
+         ID_1, Caste_1, Time_1, ID_2, Caste_2, Time_2, dif_Time)
+  
+d_fol_ev_all_att
+#total event number: 302767
+
+d_fol_ev_all_att %>% group_by(Caste_comb) %>% summarise(n = n())
+#B_B	9182
+#B_N	41264
+#N_B	28345
+#N_N	223976
+```
+
+
+##Extract video data
+```{r}
+out_dir <- "data/processed_data/"
+caste_combs <- c("B_B", "B_N", "N_B", "N_N")
+
+set.seed(40)
+walk(caste_combs, function(caste) {
+  d_fol_ev_all_att %>%
+    filter(Caste_comb == caste) %>%
+    sample_n(100) %>%
+    arrange(Colony, Day, Hour, Minute, Second) %>%
+    write_csv(file = file.path(out_dir, paste0("follow_event_ex_", caste, ".csv")))
+})
+```
+
+##Behavioral classification (Figure S8C)
+
+Manual annotation
+B-B: Aff 46, Ago 1, Neu 53
+B-NB: Aff 3, Ago 32, Neu 65
+NB-B: Aff 1, Ago 6, Neu 93
+NB-NB: Aff 7, Ago 3, Neu 74, Tug 16
+
+```{r}
+beh_context_follow <- tibble(
+  Comb_caste = rep(c("B-B", "B-N", "N-B", "N-N"), each = 4),
+  Beh_context = rep(c("Affiliative", "Agonistic", "Neutral", "TailTugging"), 4),
+  N = c(46, 1, 53, 0, 3, 32, 65, 0, 1, 6, 93, 0, 7, 3, 74, 16)
+)
+
+ggplot(beh_context_follow, aes(x = "", y = N, fill = Beh_context)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  facet_wrap(~ Comb_caste) +
+  scale_fill_manual(values = c("#459C94", "#F26419", "#CED4DA", "#B37DC2")) + 
+  theme_void() +
+  theme(strip.text = element_text(size = 12, face = "bold"))
+ggsave("data/Figure/Figure6/FigureS8C.pdf",
+       width = 4, height = 4, units = "in")
+```
+
 
 

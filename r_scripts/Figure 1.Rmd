@@ -601,9 +601,240 @@ for(i in 1:5){
 ```
 
 
+##Spatial position effects (Figure S1C-E)
+
+###Chamber function and spatial position (Figure S1C)
+```{r}
+#data construction
+base_dir <- "data/processed_data/room_def_with_nan"
+
+file_paths <- list.files(
+  path = base_dir,
+  pattern = "\\.csv$",
+  full.names = TRUE,
+  recursive = TRUE
+)
+
+corner <- c("A", "C", "G", "I")
+edge <- c("B", "D", "F", "H")
+
+func_posi_file <- function(file_path) {
+  fread(file_path) %>%
+    pivot_longer(cols = -Time, names_to = "Function", values_to = "Loc") %>%
+    count(Function, Loc, name = "Count") %>%
+    arrange(Function, Loc) %>% 
+    mutate(
+      Loc3 = case_when(
+        Loc %in% corner ~ "Corner",
+        Loc %in% edge ~ "Edge",
+        Loc == "E" ~ "Center"
+      )
+    ) %>% 
+    group_by(Function, Loc3) %>% 
+    summarise(N = sum(Count), .groups = "drop") %>%
+    mutate(
+      Date = sub("nest_(.*)\\.csv$", "\\1", basename(file_path)),
+      Colony = basename(dirname(file_path))
+    ) %>% 
+    select(Colony, Date, Function, Loc3, N)
+}
+
+all_func_posi <- map_dfr(file_paths, func_posi_file)
+
+#data processing
+loc3_levels <- c("Corner", "Edge", "Center")
+all_func_posi_col <- all_func_posi %>% 
+  group_by(Colony, Function, Loc3) %>% 
+  summarise(N = sum(N), .groups = "drop") %>% 
+  group_by(Colony, Function) %>%
+  complete(Loc3 = loc3_levels, fill = list(N = 0)) %>%
+  ungroup()
+
+#mean data
+all_func_posi_mean <- all_func_posi_col %>% 
+  group_by(Colony, Function) %>% 
+  mutate(Sum = sum(N), P = N / Sum) %>% 
+  ungroup() %>% 
+  group_by(Function, Loc3) %>% 
+  summarise(Mean_P = mean(P), .groups = "drop") %>% 
+  mutate(Function = factor(Function, levels = c("Nest", "Toilet", "Garbage")),
+         Loc3 = factor(Loc3, levels = c("Corner", "Edge", "Center")))
+
+#plot
+ggplot(all_func_posi_mean, aes(x = Function, y = Mean_P, fill = Loc3)) + 
+  geom_bar(stat = "identity", width = 0.8, position = position_dodge(width = 0.8)) + 
+  scale_fill_grey() + 
+  scale_y_continuous(expand = c(0, 0)) + 
+  theme_classic() + 
+  theme(aspect.ratio = 0.5, legend.position = "none")
+ggsave("data/Figure/Figure1/FigureS1C.pdf", 
+       width = 8, height = 4, units = "in")
+```
+
+###Number of "other" chambers per position
+```{r}
+all_func_posi_other <- all_func_posi %>% 
+  group_by(Colony, Date, Function) %>% 
+  complete(Loc3 = loc3_levels, fill = list(N = 0)) %>% 
+  ungroup() %>% 
+  group_by(Colony, Date, Loc3) %>% 
+  summarise(N = sum(N), .groups = "keep") %>% 
+  mutate(
+    Sum = if_else(Loc3 == "Center", 864000, 864000*4),
+    Other = (Sum - N) / 864000
+  ) %>% 
+  ungroup()
+```
+
+###Data on ratio of stay duration in "other" chambers per position per ID
+```{r}
+#data
+base_dir <- "data/processed_data/beh_event_data"
+
+file_paths <- list.files(
+  path = base_dir,
+  pattern = "\\.csv$",
+  full.names = TRUE,
+  recursive = TRUE
+)
+
+corner <- c("A", "C", "G", "I")
+edge <- c("B", "D", "F", "H")
+
+other_posi_file <- function(file_path) {
+  fread(file_path) %>%
+    filter(Beh5 == "Others", Disturb == 0) %>% 
+    mutate(
+      Loc3 = case_when(
+        Loc %in% corner ~ "Corner",
+        Loc %in% edge ~ "Edge",
+        Loc == "E" ~ "Center",
+        TRUE ~ "Non"
+      )
+    ) %>%
+    filter(Loc3 != "Non") %>% 
+    group_by(ID, Loc3) %>%
+    summarise(
+      Sum = sum(Duration),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      Date = sub("_.*", "", basename(file_path)),
+      Colony = basename(dirname(file_path))
+    ) %>% 
+    select(Colony, Date, ID, Loc3, Sum)
+}
+
+other_posi_data <- map_dfr(file_paths, other_posi_file)
+
+other_posi_data_f <- other_posi_data %>% 
+  group_by(Colony, Date, ID) %>% 
+  complete(Loc3 = loc3_levels, fill = list(Sum = NA)) %>% 
+  ungroup() %>% 
+  left_join(all_func_posi_other %>% select(Colony, Date, Loc3, Other), 
+            join_by(Colony, Date, Loc3)) %>% 
+  mutate(Sum_fixed = Sum / Other,
+         ID = factor(ID, levels = id),
+         Sum_fixed = ifelse(is.nan(Sum_fixed), NA, Sum_fixed)) %>% 
+  group_by(Colony, Date, ID) %>% 
+  mutate(Sum_fixed_ratio = Sum_fixed / sum(Sum_fixed, na.rm = T),
+         Loc3 = factor(Loc3, levels = c("Corner", "Edge", "Center"))) %>% 
+  ungroup()
+```
+
+###Comparisons among spatial positions by beta GLMM (Figure S1D)
+```{r}
+#Sum_fixed_ratio
+Sum_fixed_ratio_beta <- glmmTMB(Sum_fixed_ratio ~ Loc3 + (1 | ID) + (1 | Colony), 
+                                data = other_posi_data_f,
+                                family = beta_family(link = "logit"))
+
+Sum_fixed_ratio_beta2 <- glmmTMB(Sum_fixed_ratio ~ Loc3 + (1 | Colony), 
+                                data = other_posi_data_f,
+                                family = beta_family(link = "logit"))
+
+anova(Sum_fixed_ratio_beta, Sum_fixed_ratio_beta2) #remove ID random effect
+
+r2(Sum_fixed_ratio_beta2)
+#Conditional R2: 0.656 Marginal R2: 0.585
+
+emm_pair <- emmeans(Sum_fixed_ratio_beta2, pairwise ~ Loc3)
+pairs_res <- pairs(emm_pair, adjust = "holm") %>% as_tibble()
+write.csv(pairs_res, row.names = F, 
+          "data/statistical_result/FigureS1D.csv")
+
+#plot
+Sum_fixed_ratio_beta_p <- ggeffect(Sum_fixed_ratio_beta2, terms = "Loc3 [all]")
+ggplot(data = Sum_fixed_ratio_beta_p) + 
+  geom_point(aes(x = x, y = predicted), size = 4) + 
+  geom_errorbar(aes(x = x, ymax = conf.high, ymin = conf.low), 
+                position = position_dodge(width = 0.8), width = 0.25) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+ggsave("data/Figure/Figure1/FigureS1D.pdf", 
+       width =  4, height = 4, units = "in")
+```
+
+###Caste/sex differences per spatial position by beta GLMM (Figure S1E)
+```{r}
+other_posi_data_f_att <- other_posi_data_f %>% 
+  left_join(ID_att %>% select(ID, Sex), join_by(ID))
+
+#beta GLMM (all positions)
+Sum_fixed_ratio_sex_beta <- glmmTMB(Sum_fixed_ratio ~ Loc3 * Sex + (1 | Colony), 
+                                data = other_posi_data_f_att,
+                                family = beta_family(link = "logit"))
+
+#plot
+Sum_fixed_ratio_sex_beta_p <- ggeffect(Sum_fixed_ratio_sex_beta, terms = c("Loc3 [all]", "Sex [all]"))
+ggplot(data = Sum_fixed_ratio_sex_beta_p) + 
+  geom_point(aes(x = x, y = predicted, color = group), size = 4, position = position_dodge(width = 0.8)) + 
+  geom_errorbar(aes(x = x, ymax = conf.high, ymin = conf.low, color = group), 
+                position = position_dodge(width = 0.8), width = 0.4) + 
+  scale_color_manual(values = c("#D04255","#6CBAD8","#EDA184","#1DAF9E")) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+ggsave("data/Figure/Figure1/FigureS1E.pdf", 
+       width =  4, height = 4, units = "in")
+
+
+#beta GLMM per position
+
+#corner
+Sum_fixed_ratio_sex_beta_cor <- glmmTMB(Sum_fixed_ratio ~ Sex + (1 | Colony), 
+                                data = other_posi_data_f_att %>% filter(Loc3 == "Corner"),
+                                family = beta_family(link = "logit"))
+r2(Sum_fixed_ratio_sex_beta_cor)
+#Conditional R2: 0.346 Marginal R2: 0.008
+emm_pair <- emmeans(Sum_fixed_ratio_sex_beta_cor, pairwise ~ Sex)
+pairs_res <- pairs(emm_pair, adjust = "holm") %>% as_tibble()
+write.csv(pairs_res, row.names = F, 
+          "data/statistical_result/FigureS1E_corner.csv")
+
+Sum_fixed_ratio_sex_beta_edg <- glmmTMB(Sum_fixed_ratio ~ Sex + (1 | Colony), 
+                                data = other_posi_data_f_att %>% filter(Loc3 == "Edge"),
+                                family = beta_family(link = "logit"))
+r2(Sum_fixed_ratio_sex_beta_edg)
+#Conditional R2: 0.123 Marginal R2: 0.005
+emm_pair <- emmeans(Sum_fixed_ratio_sex_beta_edg, pairwise ~ Sex)
+pairs_res <- pairs(emm_pair, adjust = "holm") %>% as_tibble()
+write.csv(pairs_res, row.names = F, 
+          "data/statistical_result/FigureS1E_edge.csv")
+
+Sum_fixed_ratio_sex_beta_cen <- glmmTMB(Sum_fixed_ratio ~ Sex, 
+                                data = other_posi_data_f_att %>% filter(Colony == "HT", Loc3 == "Center"),
+                                family = beta_family(link = "logit"))
+r2(Sum_fixed_ratio_sex_beta_cen) #R2 = 0.005
+emm_pair <- emmeans(Sum_fixed_ratio_sex_beta_cen, pairwise ~ Sex)
+pairs_res <- pairs(emm_pair, adjust = "holm") %>% as_tibble()
+write.csv(pairs_res, row.names = F, 
+          "data/statistical_result/FigureS1E_center.csv")
+```
+
+
 ##Error check (Figure 1H)
 ```{r}
-#data before prcessing
+#data before processing
 day <- "0"; n_all <- 0; n_nan <- 0
 for(i in 1:5){
   colony <- colonyname[i]

@@ -464,7 +464,7 @@ for(i in 1:5){
 }
 ```
 
-##Network & behavioral cluster (Figure S5D)
+##Network & behavioral cluster (Figure S6D)
 ```{r}
 #network function
 net_vis_z_behtype <- function(d, i, var){
@@ -483,7 +483,7 @@ net_vis_z_behtype <- function(d, i, var){
       ))
   
   set.seed(15)
-  pdf(paste0("data/Figure/Figure5/FigureS5D/", colony, ".pdf"), 
+  pdf(paste0("data/Figure/Figure5/FigureS6D/", colony, ".pdf"), 
     width = 3, height = 3)
   net_ss <- graph.data.frame(d = d_syn, vertices = id_data, directed = FALSE)
   E(net_ss)$width <- d_syn %>% pull(!!sym(var)) * 0.1
@@ -526,9 +526,9 @@ zv_prox_att_t <- zv_prox_att %>%
 zv_prox_att_all <- zv_prox_att %>% bind_rows(zv_prox_att_t) %>% arrange(Colony, Comb)
 ```
 
-##Colony-level (Figures S5A & 5F)
+##Colony-level (Figures S6A & 5F)
 ```{r}
-#significant/ns proportion per colony (figure S5A)
+#significant/ns proportion per colony (figure S6A)
 zv_prox_att_prop <- zv_prox_att %>% 
   group_by(Colony, Sig) %>% summarise(n = n()) %>% mutate(p = n / sum(n))
 
@@ -539,7 +539,7 @@ ggplot(data = zv_prox_att_prop, aes(x = Colony, y = p, fill = Sig)) +
   theme_classic() + 
   theme(aspect.ratio = 1.5, legend.position = "none",
         axis.title = element_blank(), axis.text = element_blank())
-ggsave("data/Figure/Figure5/FigureS5A.pdf", width = 3, height = 4.5, units = "in")
+ggsave("data/Figure/Figure5/FigureS6A.pdf", width = 3, height = 4.5, units = "in")
 
 #model
 lm_prox_colony <- lm(data = zv_prox_att %>% mutate(Colony = as.factor(Colony)), 
@@ -602,7 +602,7 @@ ggplot() +
 ggsave("data/Figure/Figure5/Figure5G.pdf", width = 4, height = 6, units = "in")
 ```
 
-##Sex combination (Figures S5B & S5C)
+##Sex combination (Figures S6B & S6C)
 ```{r}
 #data
 zv_prox_att_sexcomb <- zv_prox_att %>% 
@@ -630,7 +630,7 @@ Anova(lmm_prox_sexcomb_bnb, test.statistic = "Chisq")
 ##x2=20.76, Df=3, p<0.001
 emm_res <- emmeans(lmm_prox_sexcomb_bnb, pairwise ~ Sex_comb)
 pair_res <- pairs(emm_res, adjust = "holm") %>% as_tibble()
-write.csv(pair_res, row.names = F, "data/statistical_result/FigureS5B.csv")
+write.csv(pair_res, row.names = F, "data/statistical_result/FigureS6B.csv")
 
 lmm_prox_sexcomb_bnb_p <- ggpredict(lmm_prox_sexcomb_bnb, terms = "Sex_comb")
 ggplot() + 
@@ -643,7 +643,7 @@ ggplot() +
   theme_classic() + 
   theme(aspect.ratio = 1.65, legend.position = "none",
         axis.title = element_blank(), axis.text = element_blank())
-ggsave("data/Figure/Figure5/FigureS5B.pdf", width = 2.5, height = 4, units = "in")
+ggsave("data/Figure/Figure5/FigureS6B.pdf", width = 2.5, height = 4, units = "in")
 
 
 #NB-NB data
@@ -658,7 +658,7 @@ Anova(lmm_prox_sexcomb_nbnb, test.statistic = "Chisq")
 ##x2=1.8604, Df=2, p=0.395
 emm_res <- emmeans(lmm_prox_sexcomb_nbnb, pairwise ~ Sex_comb)
 pair_res <- pairs(emm_res, adjust = "holm") %>% as_tibble()
-write.csv(pair_res, row.names = F, "data/statistical_result/FigureS5C.csv")
+write.csv(pair_res, row.names = F, "data/statistical_result/FigureS6C.csv")
 
 lmm_prox_sexcomb_nbnb_p <- ggpredict(lmm_prox_sexcomb_nbnb, terms = "Sex_comb")
 ggplot() + 
@@ -671,7 +671,7 @@ ggplot() +
   theme_classic() + 
   theme(aspect.ratio = 1.65, legend.position = "none",
         axis.title = element_blank(), axis.text = element_blank())
-ggsave("data/Figure/Figure5/FigureS5C.pdf", width = 2.5, height = 4, units = "in")
+ggsave("data/Figure/Figure5/FigureS6C.pdf", width = 2.5, height = 4, units = "in")
 ```
 
 ##Behavioral cluster combination (Figure 5H)
@@ -746,8 +746,392 @@ ggplot() +
 ggsave("data/Figure/Figure5/Figure5H.pdf", width = 16, height = 4, units = "in")
 ```
 
+#4 Centrality analysis for six 5-day subsets
 
-#4 Correlation between synchrony and proximity index (Figure 5I)
+## 5-day rest/active vector for each id function
+```{r}
+vector_const_loc_5 <- function(k){
+  
+  colony <- colonyname[k]
+  id <- idlist[[k]]
+  size <- length(id)
+  dataset <- dayname[[k]]
+  
+  #initialize 6 lists per individual
+  for(i in 1:size){
+    assign(paste0("d_", i, "_list"), vector("list", 6), envir = .GlobalEnv)
+  }
+  
+  #split 6 sets
+  for(j in 1:6){
+    days_5 <- dataset[((j - 1) * 5 + 1):(j * 5)]
+  
+    #prepare initial variable for each id
+    for(i in 1:size){
+      assign(paste0("tmp_", i), "0", envir = .GlobalEnv)
+    }
+  
+    #30-day vector for each id
+    for(name in days_5){
+      d <- fread(paste0("data/processed_data/locnest_data/", colony, "/", name, "_locnest.csv")) %>% 
+        mutate(Time1s = ceiling((Time-0.01)*1)) %>% 
+        distinct(Time1s, .keep_all = TRUE) %>% 
+        select(-Time, -Time1s)
+      
+      for(i in 1:size){
+        di <- d %>% pull(i) %>% replace_na("0")
+        nth <- paste0("tmp_", i)
+        assign(nth, c(get(nth), di), envir = .GlobalEnv)
+      }
+    }
+      
+    for(i in 1:size){
+      tmp <- get(paste0("tmp_", i))
+      list_name <- paste0("d_", i, "_list")
+      d_list <- get(list_name)
+      d_list[[j]] <- tmp
+      assign(list_name, d_list, envir = .GlobalEnv)
+    }
+  }
+}
+```
+
+##Permutation
+```{r}
+##synchronized times calculation function (location)
+syn_loc_list <- function(k, N, ran, ID1, ID2){
+  if(ran[k] == 1){
+    ID1r <- ID1
+  } else {
+    ID1r <- ID1[c(ran[k]:N,1:(ran[k]-1))]
+  }
+  ID12 <- tibble(ID1r, ID2) %>% 
+    mutate(Syn = case_when(ID1r == "0" & ID2 == "0" ~ 0, 
+                           ID1r == ID2 ~ 1, 
+                           TRUE ~ 0)) %>% 
+    pull(Syn)
+  Dl <<- sum(ID12 == 1)
+}
+
+#permutation (circular) test for rest/active function
+syn_loc_pt.test_list <- function(ID1, ID2, nperm){
+  #determine sequence to permute vector randomly
+  N <- length(ID1)
+  nperm_use <- min(nperm, N - 1) #in case N-1 < nperm
+  
+  set.seed(20)
+  ran <- sample(2:N, nperm_use, replace = FALSE)
+  ran <- c(1, ran) #add actual value to the first element
+  
+  DL <- 0
+  for(k in 1:(nperm_use+1)){
+    syn_loc_list(k, N, ran, ID1, ID2)
+    DL <- c(DL, Dl)
+  }
+  DL <<- DL[-1]
+}
+
+#permutation test for rest/active performing function
+syn_loc_pttest_list <- function(colony, nperm){
+  size <- length(idlist[[colony]])
+  DLs_all <- vector("list", 6)
+
+  for(seg in 1:6){
+    pb <- txtProgressBar(min = 1, max = size*(size-1)/2, style = 3)
+    DLs <- list()
+
+    for(i in 1:(size - 1)){
+      ID1_list <- get(paste0("d_", i, "_list"))
+      ID1 <- ID1_list[[seg]]
+      for(j in (i + 1):size){
+        n <- size*(size - 1)/2 - (size - i + 1)*(size - i)/2 + (j - i)
+        setTxtProgressBar(pb, n)
+
+        ID2_list <- get(paste0("d_", j, "_list"))
+        ID2 <- ID2_list[[seg]]
+
+        d_ij <- tibble(ID1 = ID1, ID2 = ID2) %>% filter(ID1 != "N", ID2 != "N")
+        ID1_use <- d_ij$ID1
+        ID2_use <- d_ij$ID2
+
+        syn_loc_pt.test_list(ID1_use, ID2_use, nperm)
+        DLs[[n]] <- DL
+      }
+    }
+    DLs_all[[seg]] <- DLs
+  }
+
+  DL_s_list <<- DLs_all
+}
+```
+
+##Integrate data
+```{r}
+nperm <- 999
+
+for (l in 1:5){
+  vector_const_loc_5(l)
+  system.time(syn_loc_pttest_list(l, nperm))
+  size <- idlist[[l]] %>% length()
+  n_pair <- size * (size - 1) / 2
+
+  for (seg in 1:6) {
+    DL_df <- as.data.frame(do.call(cbind, DL_seg))
+    DL_df <- data.frame(DL_seg)
+    colnames(DL_df) <- 1:n_pair
+    rownames(DL_df) <- paste0("perm_", 1:nperm)
+    
+    nth <- paste0("DT_", l, "_seg", seg)
+    assign(nth, DT_df)
+  }
+}
+#output data: DL_1~5_seg1~6
+
+
+##Integrate data
+trans_tidy_loc_seg <- function(obj_name){
+  df <- get(obj_name)
+  colony   <- as.integer(str_extract(obj_name, "(?<=DL_)\\d+"))
+  seg  <- as.integer(str_extract(obj_name, "(?<=_seg)\\d+"))
+  df %>% 
+    mutate(index = 1:1000) %>% 
+    pivot_longer(cols = -index, names_to = "Comb", values_to = "L_val") %>% 
+    mutate(Comb = as.integer(Comb)) %>% 
+    arrange(Comb) %>% 
+    mutate(Colony = colony, Seg = seg) %>% 
+    select(Colony, Seg, Comb, index, L_val)
+}
+
+df_list <- list()
+for (i in 1:5) {
+  for (j in 1:6) {
+    obj_name <- paste0("DL_", i, "_seg", j)
+    df_tidy <- trans_tidy_loc_seg(obj_name)
+    df_list[[length(df_list) + 1]] <- df_tidy
+  }
+}
+DL_t_t_l <- bind_rows(df_list)
+```
+
+##Proximity index data
+```{r}
+#p-value summarize function
+pv_data_prox5 <- function(d){
+  d %>% group_by(Comb) %>% 
+    reframe(Value = Prox[index == 1],
+            Med = median(Prox),
+            Pn = sum(Prox >= Prox[index == 1]) / 1000) %>% 
+    mutate(Sign = if_else(Pn < 0.5, "Plus", "Minus")) %>% 
+    mutate(P = if_else(Sign == "Plus", Pn * 2, (1 - Pn)*2 + 0.002)) %>% 
+    mutate(logP = -log10(P),
+           P_score = if_else(Sign == "Plus", logP, -logP))
+}
+
+#run
+Colony <- 0; Seg <- 0; Comb <- 0; Value <- 0; Med <- 0; Pn <- 0
+Sign <- "0"; P <- 0; logP <- 0; P_score <- 0
+pv0 <- tibble(Colony, Seg, Comb, Value, Med, Pn, Sign, P, logP, P_score)
+
+for(i in 1:5){
+  for(j in 1:6){
+    d <- DL_t_t_l %>% filter(Colony == i, Seg == j) %>% mutate(Prox = L_val)
+    pv <- pv_data_prox5(d) %>% mutate(Colony = i, Seg = j)
+    pv0 <- pv0 %>% bind_rows(pv)
+  }
+}
+pv_prox5 <- pv0 %>% slice(-1)
+
+
+#proximity index data (z_value = proximity index)
+DL_t_t_l_sim_s <- DL_t_t_l %>% 
+  group_by(Colony, Seg, Comb) %>% 
+  filter(index != 1) %>% 
+  summarise(Mean = mean(L_val), SD = sd(L_val))
+zv_prox5 <- pv_prox5 %>% 
+  left_join(DL_t_t_l_sim_s, join_by(Colony, Seg, Comb)) %>% 
+  mutate(z_value = (Value - Mean) / SD) %>% 
+  left_join(ID_att_comb, join_by(Colony, Comb))
+```
+
+##Strength Data
+```{r}
+strength_prox <- list()
+combs <- zv_prox5 %>% distinct(Colony, Seg)
+
+for (k in 1:nrow(combs)) {
+  col <- combs$Colony[k]
+  seg <- combs$Seg[k]
+
+  df_sub <- zv_prox5 %>% filter(Colony == col, Seg == seg)
+
+  g <- graph_from_data_frame(
+    d = df_sub %>% select(ID1, ID2, z_value),
+    directed = FALSE
+  )
+
+  strength_vals <- strength(g, weights = E(g)$z_value)
+  
+  result <- tibble(
+    Colony = col,
+    Seg = seg,
+    ID = names(strength_vals),
+    Strength = strength_vals
+  )
+
+  strength_prox[[length(strength_prox) + 1]] <- result
+}
+
+d_behtype_mean <- read.csv("data/processed_data/representative_cluster.csv") %>% 
+  mutate(Cluster = as.factor(Cluster))
+d_behtype_mean %>% group_by(Cluster) %>% summarise(n = n()) #16 14 11 13 7 31 9
+
+strength_prox <- bind_rows(strength_prox) %>% 
+  left_join(ID_att %>% select(ID, Caste, Sex), join_by(ID)) %>% 
+  left_join(d_behtype_mean %>% select(ID, Cluster), join_by(ID)) %>% 
+  mutate(
+    ID = factor(ID, levels = id),
+    Caste = case_when(Sex == "BF" ~ "BF", Sex == "BM" ~ "BM", TRUE ~ Caste)
+  ) %>% 
+  arrange(Colony, Seg, ID) %>% 
+  group_by(Colony, Seg) %>% 
+  mutate(Seg = factor(Seg, levels = rev(1:6)), 
+         yj.Strength = yeojohnson(Strength)$x.t) %>% #transform
+  ungroup() %>% 
+  unite(col = "ColSeg", Colony, Seg, sep = "_", remove = F)
+
+#mean data
+strength_prox_mean <- strength_prox %>% 
+  group_by(Colony, ID) %>% 
+  summarise(mean_yj = mean(yj.Strength),
+            sd_yj = sd(yj.Strength)) %>% 
+  arrange(Colony, ID)
+```
+
+##Individual differences in strength (Figure S6E)
+```{r}
+#plot
+RdYlBu <- c("#313695", "#4575b4", "#74add1", "#abd9e9", "#e0f3f8", "#ffffbf", 
+              "#fee090", "#fdae61", "#f46d43", "#d73027","#a50026")
+
+#zscore heatmap
+for(i in 1:5){
+  colony <- colonyname[i]
+  size <- idlist[[i]] %>% length()
+  p <- ggplot(strength_prox %>% filter(Colony == i), 
+              aes(x = ID, y = Seg, fill = yj.Strength)) + 
+    geom_tile() + 
+    scale_fill_gradientn(colors = colorRampPalette(RdYlBu)(n=100)) + 
+    theme_void() + 
+    theme(aspect.ratio = 10 / size,
+          legend.position = "none", 
+          axis.title = element_blank(), axis.text = element_blank())
+  ggsave(plot = p, 
+         paste0("data/Figure/Figure5/FigureS6E_heatmap_", colony, ".pdf"), 
+         width = 4 * size / 10, height = 4, units = "in")
+}
+
+#zscore mean heatmap
+for(i in 1:5){
+  colony <- colonyname[i]
+  size <- idlist[[i]] %>% length()
+  p <- ggplot(strength_prox_mean %>% filter(Colony == i), 
+              aes(x = ID, y = Seg, fill = mean_yj)) + 
+    geom_tile() + 
+    scale_fill_gradientn(colors = colorRampPalette(RdYlBu)(n=100)) + 
+    theme_void() + 
+    theme(aspect.ratio = 10 / size / 6, 
+          legend.position = "none", 
+          axis.title = element_blank(), axis.text = element_blank())
+  ggsave(plot = p, 
+         paste0("data/Figure/Figure5/FigureS6E_mean_heatmap_", colony, ".pdf"), 
+         width = 4 * size / 10, height = 4 / 6, units = "in")
+}
+
+#zscore meansd
+for(i in 1:5){
+  colony <- colonyname[i]
+  p <- ggplot(strength_prox %>% filter(Colony == i), 
+              aes(x = ID, y = yj.Strength, color = Caste)) + 
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey") + 
+    geom_jitter(size = 1, width = 0.25, height = 0, alpha = 0.5) + 
+    stat_summary(fun = mean, geom = "crossbar", width = 0.5) + 
+    stat_summary(fun.data = "mean_sdl", geom = "errorbar", width = 0) + 
+    scale_color_manual(values = c("#AF528D","#54B345","dimgrey")) + 
+    labs(x = "ID", y = "Strength") + 
+    theme_classic() + 
+    theme(aspect.ratio = 0.5, legend.position = "none")
+  ggsave(plot = p, 
+         paste0("data/Figure/Figure5/FigureS6E_meansdplot_", colony, ".pdf"), 
+         width = 8, height = 4, units = "in")
+}
+
+
+#Bayesian LMM
+set.seed(100)
+blmm_pro_str_id <- brm(
+  formula = Strength ~ 0 + ColSeg + (1 | ID),
+  data = strength_prox,
+  family = gaussian(),
+  chains = 4, iter = 4000, warmup = 1000
+)
+waic(blmm_pro_str_id) #4159.8
+
+re_blmm_pro_str_id <- posterior_samples(blmm_pro_str_id, pars = "^r_ID\\[")
+re_blmm_pro_str_id_summary <- re_blmm_pro_str_id %>%
+  pivot_longer(cols = everything(), names_to = "param", values_to = "value") %>%
+  mutate(ID = sub("r_ID\\[([^,]+),Intercept\\]", "\\1", param),
+         ID = factor(ID, levels = id)) %>%
+  group_by(ID) %>%
+  summarise(
+    Estimate = mean(value),
+    Lower95 = quantile(value, 0.025),
+    Upper95 = quantile(value, 0.975),
+    Lower99 = quantile(value, 0.005),
+    Upper99 = quantile(value, 0.995),
+    Lower999 = quantile(value, 0.0005),
+    Upper999 = quantile(value, 0.9995)
+  ) %>%
+  mutate(
+    Sig = case_when(Lower999 > 0 ~ "H***", Upper999 < 0 ~ "L***",
+                    Lower99 > 0 ~ "H**", Upper99 < 0 ~ "L**",
+                    Lower95 > 0 ~ "H*", Upper95 < 0 ~ "L*",
+                    TRUE ~ "ns")
+  )
+write.csv(re_blmm_pro_str_id_summary, row.names = F, "data/statistical_result/FigureS6E_test.csv")
+```
+
+##Cluster differences in strength (Figure S6F)
+```{r}
+#zscore plot
+colorlist <- c("#BE5378", "#CE7754", "#DFC44E", "#54B345", "#3B98B2", "#5F7EB2", "#808080")
+ggplot(strength_prox %>% filter(is.na(Cluster) == FALSE), 
+       aes(x = Cluster, y = yj.Strength, color = Cluster)) + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey") + 
+  geom_beeswarm(cex = 1.5, size = 1.2, alpha = 0.5) + 
+  stat_summary(fun = mean, geom = "crossbar", width = 0.5, fatten = 2) + 
+  scale_color_manual(values = colorlist) + 
+  theme_classic() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+ggsave("data/Figure/Figure5/FigureS6F.pdf", 
+       width =  4, height = 4, units = "in")
+
+
+#LMM
+lmm_pro_str_clu <- lmerTest::lmer(
+  data = strength_prox,
+  Strength ~ Cluster + (1|ID) + (1|ColSeg)
+)
+r2(lmm_pro_str_clu) #Conditional R2: 0.807 Marginal R2: 0.195
+
+#EMM
+emm <- emmeans(lmm_pro_str_clu, ~ Cluster)
+grand_mean <- mean(summary(emm)$emmean)
+test_res <- test(emm, null = grand_mean) %>% as_tibble()
+write.csv(test_res, row.names = F, "data/statistical_result/FigureS6F_test.csv")
+```
+
+
+#5 Correlation between synchrony and proximity index (Figure 5I)
 ```{r}
 zv_sync_prox <- zv_syntime %>% 
   select(Colony, Comb, Synchrony = z_value) %>% 

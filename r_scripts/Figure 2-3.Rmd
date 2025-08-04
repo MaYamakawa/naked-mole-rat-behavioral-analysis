@@ -309,7 +309,7 @@ varlist <- c(
 umap_var_spectral(d, varlist)
 ```
 
-###Comparison of each parameter across clusters (Figures 2D-G)
+###Comparisons of 4 parameters across clusters (Figure 2D-G)
 ```{r}
 #data
 dta_rel_umap_para <- dta_rel_umap %>% mutate(Cluster = as.factor(Cluster))
@@ -353,6 +353,218 @@ Anova(lm_para_N_relA_Others, test.statistic = "Chisq")
 emm_res <- emmeans(lm_para_N_relA_Others, pairwise ~ Cluster)
 pair_res <- pairs(emm_res, adjust = "holm") %>% as_tibble()
 write.csv(pair_res, row.names = F, "data/statistical_result/Figure2G.csv")
+```
+
+###Comparisons of all other parameters across clusters (Figure S3B-E)
+```{r}
+#Sum_Nest
+lm_para_Sum_Nest <- lm(data = dta_rel_umap_para, formula = Sum_Nest ~ Cluster)
+summary(lm_para_Sum_Nest)
+#Multiple R-squared:  0.5036,	Adjusted R-squared:  0.5026
+Anova(lm_para_Sum_Nest, test.statistic = "Chisq")
+##x2=511.2, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Sum_Nest, pairwise ~ Cluster)
+pair_clu_sum_nest <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_sum_nest, row.names = F, 
+          "data/statistical_result/FigureS3B_sumnest.csv")
+
+#N_Nest
+lm_para_N_Nest <- lm(data = dta_rel_umap_para, formula = N_Nest ~ Cluster)
+summary(lm_para_N_Nest)
+#Multiple R-squared:  0.4043,	Adjusted R-squared:  0.4031
+Anova(lm_para_N_Nest, test.statistic = "Chisq")
+##x2=341.91, Df=6, p<0.001
+emm_res <- emmeans(lm_para_N_Nest, pairwise ~ Cluster)
+pair_clu_n_nest <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_n_nest, row.names = F, 
+          "data/statistical_result/FigureS3B_nnest.csv")
+
+#Mean_Nest
+lm_para_Mean_Nest <- lm(data = dta_rel_umap_para, formula = Mean_Nest ~ Cluster)
+summary(lm_para_Mean_Nest)
+#Multiple R-squared:  0.2559,	Adjusted R-squared:  0.2545
+Anova(lm_para_Mean_Nest, test.statistic = "Chisq")
+##x2=173.3, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Mean_Nest, pairwise ~ Cluster)
+pair_clu_mean_nest <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_mean_nest, row.names = F, 
+          "data/statistical_result/FigureS3B_meannest.csv")
+
+#Sum_relA_Nest
+lm_para_Sum_relA_Nest <- lm(data = dta_rel_umap_para, formula = Sum_relA_Nest ~ Cluster)
+summary(lm_para_Sum_relA_Nest)
+#Multiple R-squared:  0.6655,	Adjusted R-squared:  0.6648
+Anova(lm_para_Sum_relA_Nest, test.statistic = "Chisq")
+##x2=1002.3, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Sum_relA_Nest, pairwise ~ Cluster)
+pair_clu_sumrel_nest <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_sumrel_nest, row.names = F, 
+          "data/statistical_result/FigureS3B_sumrelnest.csv")
+
+#N_relA_Nest
+lm_para_N_relA_Nest <- lm(data = dta_rel_umap_para, formula = N_relA_Nest ~ Cluster)
+summary(lm_para_N_relA_Nest)
+#Multiple R-squared:  0.5737,	Adjusted R-squared:  0.5728
+Anova(lm_para_N_relA_Nest, test.statistic = "Chisq")
+##x2=677.96, Df=6, p<0.001
+emm_res <- emmeans(lm_para_N_relA_Nest, pairwise ~ Cluster)
+pair_clu_nrel_nest <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_nrel_nest, row.names = F, 
+          "data/statistical_result/FigureS3B_nrelnest.csv")
+
+#Sum_Toilet
+lm_para_Sum_Toilet <- lm(data = dta_rel_umap_para, formula = Sum_Toilet ~ Cluster)
+summary(lm_para_Sum_Toilet)
+#Multiple R-squared:  0.358,	Adjusted R-squared:  0.3567
+Anova(lm_para_Sum_Toilet, test.statistic = "Chisq")
+##x2=280.96, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Sum_Toilet, pairwise ~ Cluster)
+pair_clu_sum_toilet <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_sum_toilet, row.names = F, 
+          "data/statistical_result/FigureS3C_sumtoilet.csv")
+
+#N_Toilet
+lm_para_N_Toilet <- lm(data = dta_rel_umap_para, formula = N_Toilet ~ Cluster)
+summary(lm_para_N_Toilet)
+#Multiple R-squared:  0.4547,	Adjusted R-squared:  0.4536
+Anova(lm_para_N_Toilet, test.statistic = "Chisq")
+##x2=420.17, Df=6, p<0.001
+emm_res <- emmeans(lm_para_N_Toilet, pairwise ~ Cluster)
+pair_clu_n_toilet <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_n_toilet, row.names = F, 
+          "data/statistical_result/FigureS3C_ntoilet.csv")
+
+#Mean_Toilet
+lm_para_Mean_Toilet <- lm(data = dta_rel_umap_para, formula = Mean_Toilet ~ Cluster)
+summary(lm_para_Mean_Toilet)
+#Multiple R-squared:  0.1938,	Adjusted R-squared:  0.1922
+Anova(lm_para_Mean_Toilet, test.statistic = "Chisq")
+##x2=121.13, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Mean_Toilet, pairwise ~ Cluster)
+pair_clu_mean_toilet <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_mean_toilet, row.names = F, 
+          "data/statistical_result/FigureS3C_meantoilet.csv")
+
+#Sum_relA_Toilet
+lm_para_Sum_relA_Toilet <- lm(data = dta_rel_umap_para, formula = Sum_relA_Toilet ~ Cluster)
+summary(lm_para_Sum_relA_Toilet)
+#Multiple R-squared:  0.2514,	Adjusted R-squared:  0.2499
+Anova(lm_para_Sum_relA_Toilet, test.statistic = "Chisq")
+##x2=169.23, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Sum_relA_Toilet, pairwise ~ Cluster)
+pair_clu_sumrel_toilet <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_sumrel_toilet, row.names = F, 
+          "data/statistical_result/FigureS3C_sumreltoilet.csv")
+
+#N_relA_Toilet
+lm_para_N_relA_Toilet <- lm(data = dta_rel_umap_para, formula = N_relA_Toilet ~ Cluster)
+summary(lm_para_N_relA_Toilet)
+#Multiple R-squared:  0.3121,	Adjusted R-squared:  0.3107
+Anova(lm_para_N_relA_Toilet, test.statistic = "Chisq")
+##x2=228.57, Df=6, p<0.001
+emm_res <- emmeans(lm_para_N_relA_Toilet, pairwise ~ Cluster)
+pair_clu_nrel_toilet <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_nrel_toilet, row.names = F, 
+          "data/statistical_result/FigureS3C_nreltoilet.csv")
+
+#Sum_Garbage
+lm_para_Sum_Garbage <- lm(data = dta_rel_umap_para, formula = Sum_Garbage ~ Cluster)
+summary(lm_para_Sum_Garbage)
+#Multiple R-squared:  0.4155,	Adjusted R-squared:  0.4143
+Anova(lm_para_Sum_Garbage, test.statistic = "Chisq")
+##x2=358.17, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Sum_Garbage, pairwise ~ Cluster)
+pair_clu_sum_garbage <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_sum_garbage, row.names = F, 
+          "data/statistical_result/FigureS3D_sumgarbage.csv")
+
+#N_Garbage
+lm_para_N_Garbage <- lm(data = dta_rel_umap_para, formula = N_Garbage ~ Cluster)
+summary(lm_para_N_Garbage)
+#Multiple R-squared:  0.3945,	Adjusted R-squared:  0.3933
+Anova(lm_para_N_Garbage, test.statistic = "Chisq")
+##x2=328.26, Df=6, p<0.001
+emm_res <- emmeans(lm_para_N_Garbage, pairwise ~ Cluster)
+pair_clu_n_garbage <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_n_garbage, row.names = F, 
+          "data/statistical_result/FigureS3D_ngarbage.csv")
+
+#Mean_Garbage
+lm_para_Mean_Garbage <- lm(data = dta_rel_umap_para, formula = Mean_Garbage ~ Cluster)
+summary(lm_para_Mean_Garbage)
+#Multiple R-squared:  0.2623,	Adjusted R-squared:  0.2608
+Anova(lm_para_Mean_Garbage, test.statistic = "Chisq")
+##x2=179.16, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Mean_Garbage, pairwise ~ Cluster)
+pair_clu_mean_garbage <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_mean_garbage, row.names = F, 
+          "data/statistical_result/FigureS3D_meangarbage.csv")
+
+#Sum_relA_Garbage
+lm_para_Sum_relA_Garbage <- lm(data = dta_rel_umap_para, formula = Sum_relA_Garbage ~ Cluster)
+summary(lm_para_Sum_relA_Garbage)
+#Multiple R-squared:  0.294,	Adjusted R-squared:  0.2926
+Anova(lm_para_Sum_relA_Garbage, test.statistic = "Chisq")
+##x2=209.78, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Sum_relA_Garbage, pairwise ~ Cluster)
+pair_clu_sumrel_garbage <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_sumrel_garbage, row.names = F, 
+          "data/statistical_result/FigureS3D_sumrelgarbage.csv")
+
+#N_relA_Garbage
+lm_para_N_relA_Garbage <- lm(data = dta_rel_umap_para, formula = N_relA_Garbage ~ Cluster)
+summary(lm_para_N_relA_Garbage)
+#Multiple R-squared:  0.2714,	Adjusted R-squared:  0.2699
+Anova(lm_para_N_relA_Garbage, test.statistic = "Chisq")
+##x2=187.67, Df=6, p<0.001
+emm_res <- emmeans(lm_para_N_relA_Garbage, pairwise ~ Cluster)
+pair_clu_nrel_garbage <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_nrel_garbage, row.names = F, 
+          "data/statistical_result/FigureS3D_nrelgarbage.csv")
+
+#Sum_Others
+lm_para_Sum_Others <- lm(data = dta_rel_umap_para, formula = Sum_Others ~ Cluster)
+summary(lm_para_Sum_Others)
+#Multiple R-squared:  0.5127,	Adjusted R-squared:  0.5117
+Anova(lm_para_Sum_Others, test.statistic = "Chisq")
+##x2=530.07, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Sum_Others, pairwise ~ Cluster)
+pair_clu_sum_others <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_sum_others, row.names = F, 
+          "data/statistical_result/FigureS3E_sumother.csv")
+
+#N_Others
+lm_para_N_Others <- lm(data = dta_rel_umap_para, formula = N_Others ~ Cluster)
+summary(lm_para_N_Others)
+#Multiple R-squared:  0.434,	Adjusted R-squared:  0.4329
+Anova(lm_para_N_Others, test.statistic = "Chisq")
+##x2=386.37, Df=6, p<0.001
+emm_res <- emmeans(lm_para_N_Others, pairwise ~ Cluster)
+pair_clu_n_others <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_n_others, row.names = F, 
+          "data/statistical_result/FigureS3E_nother.csv")
+
+#Mean_Others
+lm_para_Mean_Others <- lm(data = dta_rel_umap_para, formula = Mean_Others ~ Cluster)
+summary(lm_para_Mean_Others)
+#Multiple R-squared:  0.616,	Adjusted R-squared:  0.6153
+Anova(lm_para_Mean_Others, test.statistic = "Chisq")
+##x2=808.31, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Mean_Others, pairwise ~ Cluster)
+pair_clu_mean_others <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_mean_others, row.names = F, 
+          "data/statistical_result/FigureS3E_meanother.csv")
+
+#Sum_relA_Others
+lm_para_Sum_relA_Others <- lm(data = dta_rel_umap_para, formula = Sum_relA_Others ~ Cluster)
+summary(lm_para_Sum_relA_Others)
+#Multiple R-squared:  0.51,	Adjusted R-squared:  0.5091
+Anova(lm_para_Sum_relA_Others, test.statistic = "Chisq")
+##x2=524.49, Df=6, p<0.001
+emm_res <- emmeans(lm_para_Sum_relA_Others, pairwise ~ Cluster)
+pair_clu_sumrel_others <- pairs(emm_res, adjust = "holm") %>% as.tibble()
+write.csv(pair_clu_sumrel_others, row.names = F, 
+          "data/statistical_result/FigureS3E_sumrelother.csv")
 ```
 
 ###Visualization for relationship between parameters and clusters (Figure S3)
@@ -727,7 +939,7 @@ ggsave("data/Figure/Figure2/FigureS2D/NM.pdf", width = 4, height = 3, units = "i
 
 #Figure 3
 
-##Cluster assingnment (Figures 3A & 3B)
+##Cluster assingnment (Figure 3A & 3B)
 ```{r}
 #each individual & each day
 day <- dayname %>% unlist()
@@ -1021,6 +1233,276 @@ ggplot(dta_rel_umap_id_12_s, aes(x = Cluster1, y = sqrt(mean_cooc_ind), fill = C
   theme_classic() + 
   theme(aspect.ratio = 0.25, legend.position = "none")
 ggsave("data/Figure/Figure3/Figure3E.pdf", width = 10, height = 2.5, units = "in")
+```
+
+
+#Figure S4
+
+##Time-series rest data per individual
+```{r}
+base_dir <- "data/processed_data/beh_event_data"
+
+file_paths <- list.files(
+  path = base_dir,
+  pattern = "\\.csv$",
+  full.names = TRUE,
+  recursive = TRUE
+)
+
+process_rest <- function(file_path) {
+  fread(file_path) %>%
+    filter(Beh5 == "Sleep") %>% 
+    mutate(
+      Time_end = Time + Duration, 
+      ID = factor(ID, levels = id),
+      Date = sub("_.*", "", basename(file_path)),
+      Colony = basename(dirname(file_path))
+    ) %>% 
+    select(Colony, Date, ID, Time, Time_end, Duration, Loc)
+}
+
+alldata_rest <- map_dfr(file_paths, process_rest)
+
+
+#example plot
+i <- 1
+date <- "b0103"
+colony <- colonyname[i]
+d <- alldata_rest %>% filter(Colony == colony, Date == date)
+ggplot(d) +
+  geom_segment(aes(x = Time, xend = Time_end, y = ID, yend = ID, color = Loc), linewidth = 4) +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_color_manual(breaks = breaks, values = values) + 
+  theme_classic() +
+  theme(aspect.ratio = 0.25, legend.position = "none", 
+        axis.text = element_blank(), axis.title = element_blank())
+ggsave("data/Figure/Figure3/FigureS4A.pdf",
+       width = 15, height = 4, units = "in")
+```
+
+##Calculate rest initiation order
+```{r}
+#detect nest switch
+base_dir <- "data/processed_data/room_def_with_nan"
+
+file_paths <- list.files(
+  path = base_dir,
+  pattern = "\\.csv$",
+  full.names = TRUE,
+  recursive = TRUE
+)
+
+process_nest <- function(file_path) {
+  fread(file_path) %>%
+    arrange(Time, Nest) %>%
+    mutate(prev_Nest = lag(Nest)) %>%
+    filter(Nest != prev_Nest & !is.na(prev_Nest)) %>%
+    transmute(
+      new_nest = Nest,
+      switch_time = Time
+    ) %>%
+    mutate(Date = str_extract(basename(file_path), "[a-z]{1,3}\\d{4}"),
+           Colony = basename(dirname(file_path)))
+}
+nest_trans <- map_dfr(file_paths, process_nest)
+
+#calculate individual order of rest initiation per nest switch
+arrival_df <- nest_trans %>%
+  rowwise() %>%
+  do({
+    event <- .
+    t0 <- event$switch_time
+    t_start <- t0 - hours(2)
+    t_end <- t0 + hours(12)
+    
+    arrivals <- alldata_rest %>%
+      filter(
+        Colony == event$Colony,
+        Date == event$Date,
+        Loc == event$new_nest,
+        Time >= t_start,
+        Time <= t_end
+      ) %>%
+      group_by(ID) %>%
+      slice_min(Time, with_ties = FALSE) %>%
+      ungroup() %>%
+      mutate(
+        switch_time = t0,
+        window_start = t_start,
+        window_end = t_end,
+        new_nest = event$new_nest,
+        Colony = event$Colony,
+        Date = event$Date
+      )
+    
+    arrivals
+  }) %>%
+  bind_rows()
+
+arrival_df <- arrival_df %>% 
+  group_by(Colony, Date, switch_time) %>%
+  arrange(Colony, Date, Time) %>%
+  mutate(Rank = row_number(),
+         Nest_switch = cur_group_id(),
+         First_time = min(Time)) %>%
+  ungroup() %>% 
+  left_join(ID_att %>% select(ID, Caste3), join_by(ID)) %>% 
+  select(Colony, Nest_switch, Date, new_nest, switch_time, 
+         Rank, ID, Caste = Caste3, Time, Duration)
+
+#number of events
+arrival_df %>% 
+  select(Colony, Nest_switch) %>% distinct(Colony, Nest_switch) %>% 
+  group_by(Colony) %>% summarise(n = n())
+#23, 39, 21, 9, 17
+```
+
+##Data Processing
+```{r}
+#remove nest switch events with less than 80% individuals
+colony_size_df <- arrival_df %>%
+  distinct(Colony, ID) %>%
+  count(Colony, name = "n_total")
+event_participants_df <- arrival_df %>%
+  distinct(Colony, Nest_switch, ID) %>%
+  count(Colony, Nest_switch, name = "n_participants")
+valid_events <- event_participants_df %>%
+  left_join(colony_size_df, by = "Colony") %>%
+  mutate(rate = n_participants / n_total) %>%
+  filter(rate >= 0.8)
+
+nrow(valid_events) #99 events
+valid_events %>% 
+  distinct(Colony, Nest_switch, .keep_all = F) %>% 
+  group_by(Colony) %>% summarise(n = n())
+#23, 33, 21, 7, 15 events
+
+arrival_filt <- arrival_df %>%
+  semi_join(valid_events, by = c("Colony", "Nest_switch")) %>% 
+  mutate(ID = factor(ID, levels = id))
+```
+
+##Individual differences in rest initiation order
+```{r}
+for(i in 1:5){
+  colony <- colonyname[i]
+  size <- idlist[[i]] %>% length()
+  p <- ggplot(arrival_filt %>% filter(Colony == colony), 
+         aes(x = ID, y = Rank, color = Caste)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.5) + 
+    scale_y_reverse() + 
+    scale_color_manual(values = c("#AF528D","#54B345","darkgrey")) + 
+    labs(x = "Nest_switch", y = "Rank of initiating rest") + 
+    theme_classic() + 
+    theme(aspect.ratio = 10 / size, legend.position = "none")
+  ggsave(plot = p, 
+         paste0("data/Figure/Figure3/FigureS4B_", colony, ".pdf"), 
+         width = , height = 4, units = "in")
+}
+```
+
+##Individual differences by Bayesian ordinal GLMM
+```{r}
+#Bayesian ordinal GLMM
+set.seed(30)
+rank_fit <- brm(
+  formula = Rank ~ Colony + (1 | ID),
+  data = arrival_filt,
+  family = cumulative(link = "logit"),
+  iter = 4000, chains = 4, warmup = 1000
+)
+waic(rank_fit) #waic = 11600.3
+
+re_rank_fit <- posterior_samples(rank_fit, pars = "^r_ID\\[")
+re_rank_fit_summary <- re_rank_fit %>%
+  pivot_longer(cols = everything(), names_to = "param", values_to = "value") %>%
+  mutate(ID = sub("r_ID\\[([^,]+),Intercept\\]", "\\1", param),
+         ID = factor(ID, levels = id)) %>%
+  group_by(ID) %>%
+  summarise(
+    Estimate = mean(value),
+    Lower95 = quantile(value, 0.025),
+    Upper95 = quantile(value, 0.975),
+    Lower99 = quantile(value, 0.005),
+    Upper99 = quantile(value, 0.995),
+    Lower999 = quantile(value, 0.0005),
+    Upper999 = quantile(value, 0.9995)
+  ) %>%
+  mutate(
+    Sig = case_when(Lower999 > 0 ~ "H***", Upper999 < 0 ~ "L***",
+                    Lower99 > 0 ~ "H**", Upper99 < 0 ~ "L**",
+                    Lower95 > 0 ~ "H*", Upper95 < 0 ~ "L*",
+                    TRUE ~ "ns")
+  )
+write.csv(re_rank_fit_summary, row.names = F, 
+          "data/statistical_result/FigureS4B.csv")
+```
+
+##Cluster differences by Bayesian ordinal GLMM
+```{r}
+#data processing
+dta_rel_umap <- read.csv("data/processed_data/umap_layout.csv")
+arrival_filt_clu <- arrival_filt %>% 
+  select(Colony, Day = Date, Nest_switch, Rank, ID) %>% 
+  left_join(dta_rel_umap %>% select(Day, ID, Cluster), join_by(Day, ID)) %>% 
+  drop_na(Cluster) %>% 
+  mutate(Cluster = as.factor(Cluster))
+
+#sample size
+arrival_filt_clu %>% group_by(Cluster) %>% summarise(n = n()) %>% as.vector() #313 246 192 232 209 530 206
+
+#set sum-to-zero
+contrasts(arrival_filt_clu$Cluster) <- contr.sum(length(unique(arrival_filt_clu$Cluster)))
+
+#Bayesian ordinal GLMM
+set.seed(100)
+rank_clu_fit <- brm(
+  formula = Rank ~ Cluster + (1 | Colony),
+  data = arrival_filt_clu,
+  family = cumulative(link = "logit"),
+  iter = 4000, chains = 4, cores = 4
+)
+waic(rank_clu_fit) #waic = 11683.8
+
+#EMM
+em <- emmeans(rank_clu_fit, ~ Cluster, mode = "latent")
+pairs(em, adjust = "holm") %>% as_tibble()
+write.csv(pair_clu_sumrel_others, row.names = F, 
+          "data/statistical_result/FigureS4C.csv")
+
+
+#plot
+
+#generate new representative data per cluster
+newdata <- arrival_filt_clu %>%
+  distinct(Cluster) %>%
+  mutate(Colony = first(arrival_filt_clu$Colony))
+newdata$Cluster <- factor(newdata$Cluster, levels = sort(unique(newdata$Cluster)))
+
+#extract latent score
+linpred <- posterior_linpred(rank_clu_fit, newdata = newdata, re_formula = NA, transform = FALSE)
+latent_df <- as.data.frame(t(linpred)) %>%
+  mutate(Cluster = newdata$Cluster) %>%
+  pivot_longer(cols = -Cluster, names_to = "Draw", values_to = "LatentScore") %>% 
+  group_by(Cluster) %>%
+  summarise(
+    Mean  = mean(LatentScore),
+    Lower = quantile(LatentScore, 0.025),
+    Upper = quantile(LatentScore, 0.975)
+  )
+
+colorlist <- c("#BE5378","#CE7754","#DFC44E","#54B345","#3B98B2","#5F7EB2","#808080")
+ggplot(latent_df %>% filter(is.na(Cluster) == F), 
+       aes(x = Cluster, y = Mean, color = Cluster)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.4) +
+  scale_y_reverse() + 
+  scale_color_manual(values = colorlist) + 
+  ylab("Latent Score") +
+  theme_classic() + 
+  theme(aspect.ratio = 1, legend.position = "none")
+ggsave("data/Figure/Figure3/FigureS4C.pdf", 
+       width = 4, height = 4, units = "in")
 ```
 
 
